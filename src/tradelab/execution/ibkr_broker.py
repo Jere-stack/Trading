@@ -106,7 +106,7 @@ _STATUS_MAP = {
 def _require_ib_async():
     """Import `ib_async` with an actionable message if it is missing."""
     try:
-        import ib_async  # noqa: PLC0415
+        import ib_async
     except ImportError as exc:  # pragma: no cover - environment dependent
         raise BrokerError(
             "ib_async is required for IBKR execution but is not installed. "
@@ -177,7 +177,7 @@ class IbkrBroker(Broker):
                 )
                 self._wire_events()
                 return
-            except Exception as exc:  # noqa: BLE001 - surfaced below
+            except Exception as exc:
                 last_error = exc
                 if attempt < self.max_reconnect_attempts:
                     time.sleep(self.reconnect_backoff * (2**attempt))
@@ -272,7 +272,7 @@ class IbkrBroker(Broker):
 
         try:
             trade = self._ib.placeOrder(contract, ib_order)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             order.status = OrderStatus.REJECTED
             order.reject_reason = f"placeOrder raised {type(exc).__name__}: {exc}"
             self._emit_order(order)
@@ -380,7 +380,7 @@ class IbkrBroker(Broker):
             for report in self._ib.fills():
                 if str(report.execution.execId) == exec_id and report.commissionReport:
                     return to_decimal(report.commissionReport.commission), ZERO
-        except Exception:  # noqa: BLE001 - never let accounting lookup break a fill
+        except Exception:
             pass
         return ZERO, ZERO
 

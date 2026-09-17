@@ -15,10 +15,10 @@ from decimal import Decimal as D
 from tradelab.core.enums import Side, Venue
 from tradelab.core.types import Instrument
 from tradelab.costs.commission import (
+    IbkrTieredUsEquity,
     cheaper_us_schedule,
     ibkr_default_router,
     ibkr_us_fixed,
-    IbkrTieredUsEquity,
 )
 from tradelab.costs.fx import FxCostModel, FxPolicyComparison
 from tradelab.costs.slippage import SpreadImpactSlippage
@@ -83,12 +83,18 @@ def fx_policy() -> None:
 
     print("\n100 round trips of EUR 1,000 in US stocks over a year:")
     comparison = FxPolicyComparison().compare([D("1000")] * 100, block_conversions=12)
-    print(f"  per-trade conversion : EUR {comparison['per_trade_cost']:>8,.2f} "
-          f"({comparison['per_trade_bps']:.1f} bps)")
-    print(f"  monthly block        : EUR {comparison['block_cost']:>8,.2f} "
-          f"({comparison['block_bps']:.1f} bps)")
-    print(f"  annual saving        : EUR {comparison['saving']:>8,.2f} "
-          f"= {comparison['saving'] / 10000:.2%} of a EUR 10k account")
+    print(
+        f"  per-trade conversion : EUR {comparison['per_trade_cost']:>8,.2f} "
+        f"({comparison['per_trade_bps']:.1f} bps)"
+    )
+    print(
+        f"  monthly block        : EUR {comparison['block_cost']:>8,.2f} "
+        f"({comparison['block_bps']:.1f} bps)"
+    )
+    print(
+        f"  annual saving        : EUR {comparison['saving']:>8,.2f} "
+        f"= {comparison['saving'] / 10000:.2%} of a EUR 10k account"
+    )
     print("\nRule: hold a standing USD balance, convert in infrequent blocks.")
 
 
@@ -111,15 +117,17 @@ def microcap_trap() -> None:
     commission_bps = commission / (D(qty) * price) * D("10000")
     one_way = est.spread_bps + est.impact_bps + commission_bps
 
-    print(f"Helsinki micro-cap: 180 bps quoted spread, EUR 15k daily volume")
+    print("Helsinki micro-cap: 180 bps quoted spread, EUR 15k daily volume")
     print(f"Buying EUR {notional:,.0f} ({qty} shares at EUR {price}):\n")
     print(f"  spread (half, x1.25 signal-conditional) : {est.spread_bps:>7.1f} bps")
     print(f"  market impact (square-root law)         : {est.impact_bps:>7.1f} bps")
     print(f"  commission                              : {commission_bps:>7.1f} bps")
     print(f"  {'-' * 50}")
     print(f"  one way                                 : {one_way:>7.1f} bps")
-    print(f"  round trip                              : {one_way * 2:>7.1f} bps "
-          f"({one_way * 2 / 100:.2f}%)")
+    print(
+        f"  round trip                              : {one_way * 2:>7.1f} bps "
+        f"({one_way * 2 / 100:.2f}%)"
+    )
     print("\nA ~3% gross edge per trade would be required to break even.")
     print("Institutions are absent because the spread makes it uneconomic for")
     print("everyone -- not because retail size confers an advantage there.")

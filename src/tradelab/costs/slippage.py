@@ -164,9 +164,7 @@ class SpreadImpactSlippage(SlippageModel):
             reference_price=ref,
         )
 
-    def _spread_bps(
-        self, instrument: Instrument, quote: Quote | None, bar: Bar | None
-    ) -> Decimal:
+    def _spread_bps(self, instrument: Instrument, quote: Quote | None, bar: Bar | None) -> Decimal:
         if quote is not None and not quote.is_crossed:
             observed = quote.spread_bps
             if observed > 0:

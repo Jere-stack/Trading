@@ -28,8 +28,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from decimal import Decimal
 
-from tradelab.core.enums import AssetClass, OrderType, RiskDecision, Side
-from tradelab.core.money import ZERO, round_to_lot, safe_div, to_decimal
+from tradelab.core.enums import AssetClass, RiskDecision
+from tradelab.core.money import ZERO, round_to_lot, safe_div
 from tradelab.core.types import Instrument, OrderRequest, Quote
 from tradelab.costs.commission import CommissionModel
 from tradelab.costs.slippage import SlippageModel
@@ -260,7 +260,8 @@ class OrderRateCheck(RiskCheck):
         op = ctx.limits.operational
         if ctx.state.orders_today >= op.max_orders_per_day:
             return RiskVerdict.reject(
-                self.name, f"daily order cap reached ({ctx.state.orders_today}/{op.max_orders_per_day})"
+                self.name,
+                f"daily order cap reached ({ctx.state.orders_today}/{op.max_orders_per_day})",
             )
         in_window = ctx.state.orders_in_window(ctx.now, timedelta(minutes=1))
         if in_window >= op.max_orders_per_minute:
@@ -298,9 +299,7 @@ class LossLimitCheck(RiskCheck):
         equity = ctx.portfolio.equity
         state, loss = ctx.state, ctx.limits.loss
         if equity <= 0:
-            state.kill_switch.trip(
-                HaltLevel.HARD, f"equity is {equity}", ctx.now, self.name
-            )
+            state.kill_switch.trip(HaltLevel.HARD, f"equity is {equity}", ctx.now, self.name)
             return RiskVerdict.reject(self.name, f"equity is {equity}")
 
         drawdown = state.drawdown_pct(equity)
@@ -541,7 +540,9 @@ class PortfolioExposureCheck(RiskCheck):
                     f"{limits.max_currency_exposure:.0%} cap; unhedged FX risk is "
                     "uncompensated for a base-currency investor",
                 )
-            allowed = min(allowed, round_to_lot(safe_div(ccy_headroom, per_share_base), inst.lot_size))
+            allowed = min(
+                allowed, round_to_lot(safe_div(ccy_headroom, per_share_base), inst.lot_size)
+            )
 
         if allowed <= 0:
             return RiskVerdict.reject(self.name, "no exposure headroom for any compliant size")
@@ -639,7 +640,7 @@ class RiskEngine:
         for check in self.checks:
             try:
                 verdict = check.evaluate(request, ctx)
-            except Exception as exc:  # noqa: BLE001 - fail-closed is the point
+            except Exception as exc:
                 verdict = RiskVerdict.reject(
                     getattr(check, "name", check.__class__.__name__),
                     f"check raised {type(exc).__name__}: {exc}. Failing closed: an "

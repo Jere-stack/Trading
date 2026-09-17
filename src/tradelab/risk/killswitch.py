@@ -68,7 +68,9 @@ class KillSwitch:
             raise ValueError("use reset()/clear_soft() to release a halt")
         if self.level is HaltLevel.HARD and level is HaltLevel.SOFT:
             return
-        record = HaltRecord(level=level, reason=reason, timestamp=timestamp, triggered_by=triggered_by)
+        record = HaltRecord(
+            level=level, reason=reason, timestamp=timestamp, triggered_by=triggered_by
+        )
         self.level = level
         self.current = record
         self.history.append(record)
@@ -85,8 +87,7 @@ class KillSwitch:
         """Manually re-arm after a HARD halt. Requires naming the operator."""
         if not operator or not operator.strip():
             raise ValueError(
-                "re-arming after a hard halt requires an operator identity for the "
-                "audit trail"
+                "re-arming after a hard halt requires an operator identity for the audit trail"
             )
         self.history.append(
             HaltRecord(

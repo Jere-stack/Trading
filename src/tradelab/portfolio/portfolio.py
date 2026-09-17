@@ -77,7 +77,9 @@ class Portfolio:
     positions: dict[str, Position] = field(default_factory=dict)
     fx_rates: dict[str, Decimal] = field(default_factory=dict)
     equity_curve: list[EquityPoint] = field(default_factory=list)
-    _strategy_realised: dict[str, Decimal] = field(default_factory=lambda: defaultdict(lambda: ZERO))
+    _strategy_realised: dict[str, Decimal] = field(
+        default_factory=lambda: defaultdict(lambda: ZERO)
+    )
     _strategy_costs: dict[str, Decimal] = field(default_factory=lambda: defaultdict(lambda: ZERO))
     _strategy_trades: dict[str, int] = field(default_factory=lambda: defaultdict(int))
     _position_strategy: dict[str, str] = field(default_factory=dict)
@@ -135,7 +137,9 @@ class Portfolio:
     def open_positions(self) -> dict[str, Position]:
         return {k: p for k, p in self.positions.items() if not p.is_flat}
 
-    def mark(self, instrument: Instrument, price: Decimal, timestamp: datetime | None = None) -> None:
+    def mark(
+        self, instrument: Instrument, price: Decimal, timestamp: datetime | None = None
+    ) -> None:
         pos = self.positions.get(instrument.key)
         if pos is not None and not pos.is_flat:
             pos.mark(to_decimal(price), timestamp)
@@ -190,15 +194,16 @@ class Portfolio:
 
     @property
     def cash_base(self) -> Decimal:
-        return quantize_cash(
-            sum((self.to_base(amt, ccy) for ccy, amt in self.cash.items()), ZERO)
-        )
+        return quantize_cash(sum((self.to_base(amt, ccy) for ccy, amt in self.cash.items()), ZERO))
 
     @property
     def positions_value_base(self) -> Decimal:
         return quantize_cash(
             sum(
-                (self.to_base(p.market_value, p.instrument.currency) for p in self.positions.values()),
+                (
+                    self.to_base(p.market_value, p.instrument.currency)
+                    for p in self.positions.values()
+                ),
                 ZERO,
             )
         )
@@ -234,7 +239,10 @@ class Portfolio:
     def unrealised_pnl(self) -> Decimal:
         return quantize_cash(
             sum(
-                (self.to_base(p.unrealised_pnl, p.instrument.currency) for p in self.positions.values()),
+                (
+                    self.to_base(p.unrealised_pnl, p.instrument.currency)
+                    for p in self.positions.values()
+                ),
                 ZERO,
             )
         )
@@ -306,8 +314,13 @@ class Portfolio:
             "unrealised_pnl": self.unrealised_pnl,
             "position_count": len(self.open_positions),
             "positions": {
-                k: {"qty": p.quantity, "avg": p.average_price, "last": p.last_price,
-                    "mv": p.market_value, "upnl": p.unrealised_pnl}
+                k: {
+                    "qty": p.quantity,
+                    "avg": p.average_price,
+                    "last": p.last_price,
+                    "mv": p.market_value,
+                    "upnl": p.unrealised_pnl,
+                }
                 for k, p in self.open_positions.items()
             },
             "currency_exposure": self.exposure_by_currency(),

@@ -222,8 +222,7 @@ class RiskLimits(BaseModel):
         for name, budget in v.items():
             if budget <= 0 or budget > 1:
                 raise ValueError(
-                    f"strategy_budgets[{name}] = {budget} must be in (0, 1] as a "
-                    "fraction of equity"
+                    f"strategy_budgets[{name}] = {budget} must be in (0, 1] as a fraction of equity"
                 )
         return v
 

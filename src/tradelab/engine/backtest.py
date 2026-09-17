@@ -32,7 +32,7 @@ from tradelab.core.clock import SimulationClock
 from tradelab.core.enums import RiskDecision, RunMode
 from tradelab.core.ids import IdGenerator, new_run_id
 from tradelab.core.money import ZERO
-from tradelab.core.types import Bar, Fill, Instrument, OrderRequest, Quote
+from tradelab.core.types import Bar, Fill, OrderRequest, Quote
 from tradelab.costs.commission import CommissionModel, ibkr_default_router
 from tradelab.costs.slippage import SlippageModel, SpreadImpactSlippage
 from tradelab.execution.sim_broker import SimulatedBroker, SimulationConfig
@@ -176,9 +176,7 @@ class BacktestEngine:
         def record_fill(fill: Fill) -> None:
             all_fills.append(fill)
             ctx = contexts.get(fill.strategy_id)
-            strategy = next(
-                (s for s in self.strategies if s.strategy_id == fill.strategy_id), None
-            )
+            strategy = next((s for s in self.strategies if s.strategy_id == fill.strategy_id), None)
             if ctx is not None and strategy is not None:
                 strategy.on_fill(ctx, fill)
 
@@ -228,9 +226,7 @@ class BacktestEngine:
                 ctx.equity = portfolio.equity
                 ctx._open_order_keys = open_keys
                 relevant = {
-                    inst.key: bar_map[inst.key]
-                    for inst in strategy.universe
-                    if inst.key in bar_map
+                    inst.key: bar_map[inst.key] for inst in strategy.universe if inst.key in bar_map
                 }
                 if not relevant or not strategy.is_warm(ctx):
                     ctx.drain()

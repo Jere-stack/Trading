@@ -12,23 +12,21 @@ from decimal import Decimal as D
 
 import pytest
 
-from tradelab.core.enums import AssetClass, OrderType, RiskDecision, Side
+from tests.conftest import NOW
+from tradelab.core.enums import OrderType, RiskDecision, Side
 from tradelab.core.types import Instrument, OrderRequest
 from tradelab.risk.engine import (
-    CostEfficiencyCheck,
     RiskCheck,
     RiskEngine,
     RiskVerdict,
 )
 from tradelab.risk.killswitch import HaltLevel
 from tradelab.risk.limits import (
-    LossLimits,
     OperationalLimits,
     PortfolioLimits,
     PositionLimits,
     RiskLimits,
 )
-from tests.conftest import NOW
 
 
 def req(inst, qty, side=Side.BUY, strategy_id="test", **kw):
@@ -167,7 +165,9 @@ class TestPortfolioLimits:
             for i in range(3)
         ]
         for inst in insts[:2]:
-            portfolio.apply_fill(Fill(f"f{inst.symbol}", "o", inst, Side.BUY, D("100"), D("10"), NOW))
+            portfolio.apply_fill(
+                Fill(f"f{inst.symbol}", "o", inst, Side.BUY, D("100"), D("10"), NOW)
+            )
         ctx = make_ctx({insts[2]: D("10")}, limits=limits)
         r = RiskEngine().evaluate(req(insts[2], 60), ctx)
         assert r.decision is RiskDecision.REJECT

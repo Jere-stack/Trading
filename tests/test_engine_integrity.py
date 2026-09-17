@@ -12,14 +12,14 @@ from decimal import Decimal as D
 
 import pytest
 
-from tradelab.core.enums import OrderType, Side
-from tradelab.core.types import Bar, Instrument, OrderRequest
+from tradelab.core.enums import OrderType
+from tradelab.core.types import Bar, Instrument
 from tradelab.costs.commission import ZeroCommission, ibkr_default_router
 from tradelab.costs.slippage import NoSlippage
 from tradelab.engine.backtest import BacktestEngine
 from tradelab.execution.sim_broker import SimulationConfig
-from tradelab.risk.limits import PositionLimits, PortfolioLimits, RiskLimits
-from tradelab.strategy.base import Strategy, StrategyContext
+from tradelab.risk.limits import PortfolioLimits, PositionLimits, RiskLimits
+from tradelab.strategy.base import Strategy
 
 START = datetime(2026, 1, 5, 21, 0, tzinfo=UTC)
 
@@ -222,9 +222,7 @@ class TestFillRealism:
         """Pins: a halt or data gap must not produce a phantom fill."""
         inst = make_instrument()
         bars = series(inst, [100, 100], volume=D("1000000"))
-        bars[1] = Bar(
-            inst, bars[1].timestamp, D("100"), D("100"), D("100"), D("100"), D("0")
-        )
+        bars[1] = Bar(inst, bars[1].timestamp, D("100"), D("100"), D("100"), D("100"), D("0"))
         strat = BuyOnceStrategy(inst, quantity=D("10"))
         result = BacktestEngine(
             strategies=[strat], limits=permissive_limits(), commission_model=ZeroCommission()
@@ -317,6 +315,4 @@ class TestDeterminism:
 
         a, b = run(), run()
         assert [p.equity for p in a.equity_curve] == [p.equity for p in b.equity_curve]
-        assert [(f.price, f.quantity) for f in a.fills] == [
-            (f.price, f.quantity) for f in b.fills
-        ]
+        assert [(f.price, f.quantity) for f in a.fills] == [(f.price, f.quantity) for f in b.fills]

@@ -45,6 +45,11 @@ src = ["src", "tests"]
 select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
 ignore = ["E501"]
 
+[tool.ruff.lint.per-file-ignores]
+# Typer's documented API puts Option()/Argument() calls in argument defaults;
+# B008 is a false positive for this framework.
+"src/tradelab/cli.py" = ["B008"]
+
 [tool.mypy]
 python_version = "3.11"
 strict = false

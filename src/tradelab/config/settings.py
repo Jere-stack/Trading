@@ -188,8 +188,7 @@ class Settings(BaseSettings):
             )
         if self.broker.port == 7497:
             problems.append(
-                "broker.port=7497 is IBKR's PAPER port but mode is LIVE; "
-                "one of the two is wrong"
+                "broker.port=7497 is IBKR's PAPER port but mode is LIVE; one of the two is wrong"
             )
         if self.risk.portfolio.max_gross_exposure > Decimal("1"):
             problems.append(
@@ -197,9 +196,7 @@ class Settings(BaseSettings):
                 "leverage, which is outside the stated cash-equity mandate"
             )
         if problems:
-            raise ValueError(
-                "unsafe LIVE configuration:\n  - " + "\n  - ".join(problems)
-            )
+            raise ValueError("unsafe LIVE configuration:\n  - " + "\n  - ".join(problems))
         return self
 
 
@@ -223,7 +220,9 @@ def load_settings(
 
     resolved_mode = mode or os.environ.get("TRADELAB_MODE") or merged.get("mode")
     if resolved_mode is not None:
-        mode_value = resolved_mode.value if isinstance(resolved_mode, RunMode) else str(resolved_mode)
+        mode_value = (
+            resolved_mode.value if isinstance(resolved_mode, RunMode) else str(resolved_mode)
+        )
         mode_file = directory / f"{mode_value.lower()}.yaml"
         if mode_file.exists():
             merged = _deep_merge(merged, _read_yaml(mode_file))

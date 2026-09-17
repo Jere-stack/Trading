@@ -7,6 +7,8 @@ construct known-worthless strategies and assert that they are rejected.
 
 from __future__ import annotations
 
+import itertools
+
 import numpy as np
 import pytest
 
@@ -185,7 +187,7 @@ class TestWalkForward:
 
     def test_test_windows_are_disjoint_and_ordered(self):
         splits = purged_walk_forward_splits(1000, n_splits=5, embargo=10)
-        for a, b in zip(splits, splits[1:], strict=False):
+        for a, b in itertools.pairwise(splits):
             assert a.test_end <= b.test_start
 
     def test_anchored_training_grows_rolling_does_not(self):

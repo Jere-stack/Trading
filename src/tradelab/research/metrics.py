@@ -65,7 +65,9 @@ def to_returns(equity: np.ndarray) -> np.ndarray:
     return np.nan_to_num(rets, nan=0.0, posinf=0.0, neginf=0.0)
 
 
-def sharpe_ratio(returns: np.ndarray, periods_per_year: int = TRADING_DAYS, rf: float = 0.0) -> float:
+def sharpe_ratio(
+    returns: np.ndarray, periods_per_year: int = TRADING_DAYS, rf: float = 0.0
+) -> float:
     """Annualised Sharpe. Returns 0.0 for degenerate input rather than inf.
 
     A zero-variance return series is not an infinitely good strategy; it is a
@@ -81,7 +83,9 @@ def sharpe_ratio(returns: np.ndarray, periods_per_year: int = TRADING_DAYS, rf: 
     return float(excess.mean() / sd * np.sqrt(periods_per_year))
 
 
-def sortino_ratio(returns: np.ndarray, periods_per_year: int = TRADING_DAYS, rf: float = 0.0) -> float:
+def sortino_ratio(
+    returns: np.ndarray, periods_per_year: int = TRADING_DAYS, rf: float = 0.0
+) -> float:
     """Downside-deviation Sharpe. Penalises only losses, as an investor does."""
     returns = np.asarray(returns, dtype=float)
     if returns.size < 2:
@@ -157,16 +161,33 @@ def compute_metrics(
 
     if n == 0 or equity[0] == 0:
         return PerformanceMetrics(
-            n_periods=n, total_return=0.0, cagr=0.0, volatility=0.0, sharpe=0.0,
-            sortino=0.0, max_drawdown=0.0, max_drawdown_duration=0, calmar=0.0,
-            hit_rate=0.0, profit_factor=0.0, skew=0.0, kurtosis=0.0,
-            best_period=0.0, worst_period=0.0, var_95=0.0, cvar_95=0.0,
+            n_periods=n,
+            total_return=0.0,
+            cagr=0.0,
+            volatility=0.0,
+            sharpe=0.0,
+            sortino=0.0,
+            max_drawdown=0.0,
+            max_drawdown_duration=0,
+            calmar=0.0,
+            hit_rate=0.0,
+            profit_factor=0.0,
+            skew=0.0,
+            kurtosis=0.0,
+            best_period=0.0,
+            worst_period=0.0,
+            var_95=0.0,
+            cvar_95=0.0,
             periods_per_year=periods_per_year,
         )
 
     total = float(equity[-1] / equity[0] - 1.0)
     years = n / periods_per_year
-    cagr = float((equity[-1] / equity[0]) ** (1 / years) - 1.0) if years > 0 and equity[-1] > 0 else 0.0
+    cagr = (
+        float((equity[-1] / equity[0]) ** (1 / years) - 1.0)
+        if years > 0 and equity[-1] > 0
+        else 0.0
+    )
     vol = float(returns.std(ddof=1) * np.sqrt(periods_per_year)) if n > 1 else 0.0
     dd, dd_dur = max_drawdown(equity)
 

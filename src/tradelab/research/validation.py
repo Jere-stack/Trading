@@ -320,9 +320,7 @@ class Split:
         return slice(self.test_start, self.test_end)
 
     def __str__(self) -> str:
-        return (
-            f"train[{self.train_start}:{self.train_end}] test[{self.test_start}:{self.test_end}]"
-        )
+        return f"train[{self.train_start}:{self.train_end}] test[{self.test_start}:{self.test_end}]"
 
 
 def purged_walk_forward_splits(
@@ -487,7 +485,9 @@ def block_bootstrap_sharpe(
         samples[i] = (drawn.mean() / sd * np.sqrt(periods_per_year)) if sd > 0 else 0.0
 
     observed_sd = returns.std(ddof=1)
-    observed = float(returns.mean() / observed_sd * np.sqrt(periods_per_year)) if observed_sd > 0 else 0.0
+    observed = (
+        float(returns.mean() / observed_sd * np.sqrt(periods_per_year)) if observed_sd > 0 else 0.0
+    )
     return {
         "observed": observed,
         "mean": float(samples.mean()),

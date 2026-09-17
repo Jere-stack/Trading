@@ -46,7 +46,7 @@ from tradelab.core.enums import (
     TimeInForce,
 )
 from tradelab.core.ids import IdGenerator
-from tradelab.core.money import ZERO, quantize_price, round_to_lot, to_decimal
+from tradelab.core.money import ZERO, quantize_price, round_to_lot
 from tradelab.core.types import Bar, Fill, Instrument, Order, OrderRequest, Position, Quote
 from tradelab.costs.commission import CommissionModel, ibkr_default_router
 from tradelab.costs.slippage import SlippageModel, SpreadImpactSlippage
@@ -182,9 +182,7 @@ class SimulatedBroker(Broker):
             if not self._is_eligible(order, bar):
                 continue
             # Record the first session in which this order could actually trade.
-            first_session = self._eligible_date.setdefault(
-                order.order_id, bar.timestamp.date()
-            )
+            first_session = self._eligible_date.setdefault(order.order_id, bar.timestamp.date())
             if self._is_expired(order, bar, first_session):
                 order.status = OrderStatus.EXPIRED
                 order.updated_at = bar.timestamp

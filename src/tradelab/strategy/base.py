@@ -175,6 +175,11 @@ class Strategy(ABC):
     `warmup_bars` is mandatory rather than optional: a strategy that trades
     before its indicators are populated produces signals from partial data,
     which shows up as a spurious edge in the first weeks of every backtest.
+
+    `on_start`, `on_fill` and `on_finish` are deliberately concrete no-ops
+    rather than abstract methods. Most strategies need none of them, and forcing
+    every subclass to define three empty overrides adds noise without adding
+    safety. Only `universe` and `on_bar` are genuinely required.
     """
 
     def __init__(self, strategy_id: str, warmup_bars: int = 0) -> None:
@@ -188,23 +193,21 @@ class Strategy(ABC):
     def universe(self) -> list[Instrument]:
         """Instruments this strategy may trade. Fixed for the run."""
 
-    def on_start(self, ctx: StrategyContext) -> None:
+    def on_start(self, ctx: StrategyContext) -> None:  # noqa: B027
         """Called once before the first bar."""
 
     @abstractmethod
     def on_bar(self, ctx: StrategyContext, bars: dict[str, Bar]) -> None:
         """Called once per timestamp with all bars closing at that timestamp."""
 
-    def on_fill(self, ctx: StrategyContext, fill: Fill) -> None:
+    def on_fill(self, ctx: StrategyContext, fill: Fill) -> None:  # noqa: B027
         """Called after each fill on this strategy's orders."""
 
-    def on_finish(self, ctx: StrategyContext) -> None:
+    def on_finish(self, ctx: StrategyContext) -> None:  # noqa: B027
         """Called once after the last bar."""
 
     def is_warm(self, ctx: StrategyContext) -> bool:
         """True when every instrument has at least `warmup_bars` of history."""
         if self.warmup_bars <= 0:
             return True
-        return all(
-            len(ctx.history(inst)) >= self.warmup_bars for inst in self.universe
-        )
+        return all(len(ctx.history(inst)) >= self.warmup_bars for inst in self.universe)
