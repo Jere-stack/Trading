@@ -1,0 +1,14 @@
+# Paper trading overlay. IBKR paper account = port 7497.
+mode: PAPER
+
+broker:
+  name: ibkr
+  host: 127.0.0.1
+  port: 7497          # IBKR paper. Live is 7496.
+  client_id: 1
+  readonly: false
+
+logging:
+  level: DEBUG        # Verbose in paper: this is when you want the detail.
+
+state_path: state/paper.sqlite

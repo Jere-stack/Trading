@@ -1,0 +1,85 @@
+# Mode-independent configuration.
+#
+# Never put account numbers or credentials here. Use environment variables
+# (TRADELAB_BROKER__ACCOUNT_ID). A repository that can hold a live account
+# number is one commit away from holding it publicly.
+
+base_currency: EUR
+initial_cash: "10000"
+
+costs:
+  # IBKR Tiered is cheaper than Fixed below ~140 shares, which covers this
+  # account's realistic order sizes. See docs/01-broker-selection.md.
+  commission_schedule: ibkr_tiered
+  # Inflates modelled spread: signals cluster in wide-spread conditions
+  # (gaps, volume spikes), so an average spread understates cost for
+  # exactly the moments a strategy trades.
+  spread_multiplier: "1.25"
+  default_spread_bps: "5"
+  impact_coefficient: "0.75"
+  limit_adverse_selection_bps: "2"
+  fx_rate_bps: "0.20"
+  fx_minimum: "2.00"
+
+simulation:
+  max_volume_participation: "0.05"
+  require_limit_penetration: true
+  fill_on_next_bar: true
+  allow_partial_fills: true
+
+risk:
+  position:
+    # 15% of EUR 10k = EUR 1,500 per name. Concentration is forced by
+    # economics: 30 positions of EUR 330 would pay ~45 bps round trip
+    # versus ~25 bps for 10 positions of EUR 1,000.
+    max_position_weight: "0.15"
+    # Below EUR 400, the EUR 1.25 commission floor alone exceeds any
+    # plausible per-trade edge.
+    min_order_notional: "400"
+    # The key small-account control: reject orders whose modelled one-way
+    # cost exceeds this share of notional.
+    max_cost_bps_of_notional: "35"
+    max_participation_of_adv: "0.01"
+    allow_short: false
+    # Sub-EUR-3 stocks have wide bps spreads and large relative tick sizes.
+    min_price: "3"
+
+  portfolio:
+    max_gross_exposure: "1.0"   # 1.0 = no leverage, as mandated
+    max_net_exposure: "1.0"
+    max_open_positions: 12
+    # Unhedged USD exposure is uncompensated risk for a EUR investor and
+    # EUR/USD moves 6-10% a year -- enough to swamp a 30 bps/trade edge.
+    max_currency_exposure: "0.70"
+    max_new_positions_per_day: 6
+
+  loss:
+    max_daily_loss_pct: "0.03"    # SOFT halt: blocks new risk, allows exits
+    max_drawdown_pct: "0.15"      # HARD halt: requires manual re-arming
+    max_consecutive_losing_days: 8
+    max_strategy_drawdown_pct: "0.25"
+
+  operational:
+    max_orders_per_minute: 20
+    max_orders_per_day: 100
+    max_stale_data_seconds: 300
+    max_limit_price_deviation: "0.10"
+    reject_duplicate_orders: true
+    duplicate_window_seconds: 60
+    require_market_open: true
+
+  # Per-strategy gross exposure budgets as a fraction of equity. Must sum to
+  # at most max_gross_exposure, or config load fails -- otherwise the first
+  # strategy to fire consumes shared capacity and realised allocation
+  # depends on arrival order rather than intent.
+  strategy_budgets: {}
+
+data:
+  root: data
+  bar_size: 1 day
+  calendar: XNYS
+
+logging:
+  level: INFO
+  json_output: true
+  directory: logs
