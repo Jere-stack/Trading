@@ -316,3 +316,106 @@ class TestDeterminism:
         a, b = run(), run()
         assert [p.equity for p in a.equity_curve] == [p.equity for p in b.equity_curve]
         assert [(f.price, f.quantity) for f in a.fills] == [(f.price, f.quantity) for f in b.fills]
+
+
+class TestInFlightExposure:
+    """Regression tests for exposure committed by approved-but-unfilled orders.
+
+    This was a real bug found by end-to-end testing, not by unit tests. Orders
+    emitted in one batch are all evaluated against the same portfolio snapshot,
+    because nothing fills until a later bar. Without reserving in-flight
+    exposure, each of N orders independently consumed the full headroom and the
+    book ended up N times over the gross exposure limit -- which then tripped
+    the portfolio's leverage backstop mid-run.
+    """
+
+    def test_batch_of_orders_cannot_each_spend_full_headroom(self):
+        """Pins the bug: 10 simultaneous orders must not breach gross exposure."""
+        insts = [make_instrument(f"B{i}", adv=D("5000000"), spread_bps=D("5")) for i in range(10)]
+        bars = []
+        for inst in insts:
+            bars.extend(series(inst, [100, 100, 100, 100]))
+
+        class BuyEverythingAtOnce(Strategy):
+            """Requests a 50% position in ten names on the same bar."""
+
+            def __init__(self):
+                super().__init__("greedy_batch")
+                self.done = False
+
+            @property
+            def universe(self):
+                return insts
+
+            def on_bar(self, ctx, bars_map):
+                if self.done:
+                    return
+                self.done = True
+                for inst in insts:
+                    # 50 shares x 100 = EUR 5,000 each; ten of these is EUR 50,000
+                    # against EUR 10,000 of equity.
+                    ctx.buy(inst, D("50"))
+
+        limits = RiskLimits(
+            position=PositionLimits(
+                max_position_weight=D("1.0"),
+                min_order_notional=D("0"),
+                max_cost_bps_of_notional=D("100000"),
+                max_participation_of_adv=D("1"),
+            ),
+            portfolio=PortfolioLimits(
+                max_gross_exposure=D("1.0"),
+                max_open_positions=20,
+                max_new_positions_per_day=20,
+            ),
+        )
+        # Must complete without the portfolio's leverage backstop raising.
+        result = BacktestEngine(
+            strategies=[BuyEverythingAtOnce()],
+            initial_cash=D("10000"),
+            limits=limits,
+        ).run(bars)
+
+        assert result.portfolio.leverage <= D("1.02"), (
+            f"gross exposure breached the ceiling: leverage {result.portfolio.leverage}"
+        )
+        filled_notional = sum(f.gross_notional for f in result.fills)
+        assert filled_notional <= D("10200"), (
+            f"filled EUR {filled_notional} against EUR 10,000 equity"
+        )
+
+    def test_resting_orders_still_reserve_headroom_on_later_bars(self):
+        """Pins the cross-bar case: an unfilled order keeps its reservation."""
+        inst = make_instrument("REST", adv=D("5000000"), spread_bps=D("5"))
+        # Thin volume so orders fill slowly and remain resting across bars.
+        bars = series(inst, [100] * 8, volume=D("2000"))
+
+        class KeepBuying(Strategy):
+            @property
+            def universe(self):
+                return [inst]
+
+            def on_bar(self, ctx, bars_map):
+                ctx.buy(inst, D("40"))
+
+        limits = RiskLimits(
+            position=PositionLimits(
+                max_position_weight=D("1.0"),
+                min_order_notional=D("0"),
+                max_cost_bps_of_notional=D("100000"),
+                max_participation_of_adv=D("1"),
+            ),
+            portfolio=PortfolioLimits(
+                max_gross_exposure=D("1.0"),
+                max_new_positions_per_day=20,
+            ),
+        )
+        result = BacktestEngine(
+            strategies=[KeepBuying("repeat_buyer")],
+            initial_cash=D("10000"),
+            limits=limits,
+        ).run(bars)
+
+        assert result.portfolio.leverage <= D("1.02")
+        # Some orders must have been blocked by committed exposure.
+        assert result.rejections or result.orders_resized > 0

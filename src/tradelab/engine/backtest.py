@@ -252,6 +252,22 @@ class BacktestEngine:
                 slippage_model=self.slippage_model,
                 market_open=True,
             )
+            # Seed in-flight exposure from orders still resting unfilled, so
+            # this batch cannot re-spend headroom those orders have committed.
+            for resting in broker.open_orders():
+                leaves = resting.leaves_quantity
+                if leaves <= 0:
+                    continue
+                resting_price = bar_map.get(resting.instrument.key)
+                mark = (
+                    resting_price.close
+                    if resting_price is not None
+                    else resting.request.limit_price
+                )
+                if mark is None:
+                    continue
+                risk_ctx.reserve(resting.request.with_quantity(leaves), mark)
+
             for intent in intents:
                 result = risk.evaluate(intent, risk_ctx)
                 if not result.is_approved:
@@ -271,6 +287,12 @@ class BacktestEngine:
                 # ---- 6. submit; eligible to fill from the next bar
                 was_flat = portfolio.quantity_of(approved.instrument) == 0
                 broker.submit(ids.next("ord"), approved)
+                # Reserve immediately: the next intent in this batch is evaluated
+                # against the same portfolio snapshot, since nothing fills until a
+                # later bar. Without this, each order re-spends the same headroom.
+                approved_price = bar_map.get(approved.instrument.key)
+                if approved_price is not None:
+                    risk_ctx.reserve(approved, approved_price.close)
                 state.record_order(timestamp, dedupe_key(approved))
                 if was_flat:
                     state.new_positions_today += 1

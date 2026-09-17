@@ -73,6 +73,7 @@ class Portfolio:
 
     base_currency: str = "EUR"
     max_leverage: Decimal = Decimal("1.0")
+    leverage_tolerance: Decimal = Decimal("0.02")
     cash: dict[str, Decimal] = field(default_factory=dict)
     positions: dict[str, Position] = field(default_factory=dict)
     fx_rates: dict[str, Decimal] = field(default_factory=dict)
@@ -182,11 +183,19 @@ class Portfolio:
                     "the pre-trade risk gate should have prevented this"
                 )
             leverage = safe_div(self.gross_exposure, equity)
-            if leverage > self.max_leverage:
+            # `leverage_tolerance` absorbs the gap between an approved notional
+            # and a realised one: commission settles out of cash, and fills land
+            # at a later bar's price. Without it, normal execution drift would
+            # raise on a 0.1% overshoot that is not a real breach of the
+            # no-leverage mandate. A genuine breach still raises -- this is a
+            # backstop assertion, and the pre-trade gate is the real control.
+            if leverage > self.max_leverage * (Decimal("1") + self.leverage_tolerance):
                 raise InsufficientFundsError(
                     f"fill {fill.fill_id} would put leverage at {leverage:.3f}x, above the "
-                    f"{self.max_leverage}x ceiling (gross {self.gross_exposure} vs equity "
-                    f"{equity} {self.base_currency}). Stocks-only mandate forbids borrowing."
+                    f"{self.max_leverage}x ceiling plus {self.leverage_tolerance:.0%} "
+                    f"tolerance (gross {self.gross_exposure} vs equity {equity} "
+                    f"{self.base_currency}). Stocks-only mandate forbids borrowing; the "
+                    "pre-trade risk gate should have prevented this."
                 )
         return realised
 

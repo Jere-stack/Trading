@@ -21,7 +21,7 @@ strategies.** That is the intended state — see
 uv venv --python 3.11
 uv pip install -e ".[dev]"
 
-.venv/bin/python -m pytest tests/ -q          # 87 tests
+.venv/bin/python -m pytest tests/ -q          # 89 tests
 .venv/bin/python scripts/cost_report.py       # why costs dominate at €10k
 .venv/bin/python scripts/hypothesis_screen.py # reject hypotheses before any data
 .venv/bin/tradelab config --mode PAPER        # validate configuration
@@ -109,7 +109,7 @@ src/tradelab/
 
 docs/            Broker selection, architecture, risk, protocol, hypotheses
 scripts/         Reproducible cost and hypothesis reports
-tests/           87 tests
+tests/           89 tests
 ```
 
 Dependencies point inward only.
@@ -153,3 +153,34 @@ Stocks and ETFs only. No options, futures, crypto, CFDs or leverage — enforced
 by the `AssetClass` enum and `MandateCheck`, so adding them requires a
 reviewable change rather than passing a different contract type through the
 stack. Long-only by default.
+
+---
+
+## Pipeline validation
+
+`scripts/pipeline_demo.py` validates the whole system end to end against
+synthetic data with a **known injected effect**. This matters because
+validating a research pipeline on real market data confounds two unknowns:
+whether the pipeline works, and whether the effect exists.
+
+Results:
+
+| Case | Gross return | Net return | Verdict |
+|---|---|---|---|
+| No effect | +12.31% | **−0.73%** | Beta, destroyed by 940 bps cost drag |
+| 300 bps effect | +382.69% | +345.28% | Detected |
+
+Two findings worth stating:
+
+**A long-only strategy with no edge does not merely fail to profit at €10k — it
+loses money by trading at all.** The null case earns +12.31% gross purely from
+market exposure, and ~940 bps of annual cost drag turns that into a net loss.
+
+**The permutation test correctly separates skill from exposure** (p=0.71 with no
+effect, p=0.000 with one), which a Sharpe ratio cannot do. The null case's
+Sharpe of 0.38 looks like a weak edge; it is entirely beta.
+
+Break-even in that setup is ~100 bps per event — and that is a **lower bound**,
+because the synthetic effect is injected into all names simultaneously and
+compounds over 739 fills. Against it, the pre-registered priors are sobering:
+PEAD at 90 bps sits below the floor before crowding is even considered.

@@ -95,6 +95,49 @@ class RiskContext:
     slippage_model: SlippageModel | None = None
     market_open: bool = True
     sectors: dict[str, str] = field(default_factory=dict)
+    pending_exposure: dict[str, Decimal] = field(default_factory=dict)
+    pending_quantity: dict[str, Decimal] = field(default_factory=dict)
+    pending_by_strategy: dict[str, Decimal] = field(default_factory=dict)
+
+    @property
+    def pending_exposure_base(self) -> Decimal:
+        """Base-currency notional of approved-but-unfilled risk-increasing orders.
+
+        This must be counted against every exposure limit. An order that has
+        been approved but has not yet filled has already committed capital: it
+        is working in the market and will consume exposure when it fills.
+
+        Omitting it is a subtle and serious bug. Orders emitted in the same
+        batch are all evaluated against the same portfolio snapshot -- because
+        nothing fills until a later bar -- so without reservation each of N
+        orders independently consumes the full headroom, and the book ends up
+        N times over the limit. The same applies across bars to orders still
+        resting unfilled.
+        """
+        return sum(self.pending_exposure.values(), ZERO)
+
+    def pending_for(self, instrument: Instrument) -> Decimal:
+        """Unfilled quantity already committed in `instrument`."""
+        return self.pending_quantity.get(instrument.key, ZERO)
+
+    def reserve(self, request: OrderRequest, price: Decimal) -> None:
+        """Record an approved order's committed exposure.
+
+        Only risk-increasing orders are reserved. A reducing order frees
+        exposure rather than consuming it, and the exposure checks exempt
+        reducing orders anyway, so reserving them would double-count in the
+        conservative direction and block legitimate exits.
+        """
+        if self.is_reducing(request):
+            return
+        instrument = request.instrument
+        key = instrument.key
+        rate = self.portfolio.fx_rate(instrument.currency)
+        notional_base = request.quantity * price * instrument.multiplier * rate
+        self.pending_exposure[key] = self.pending_exposure.get(key, ZERO) + notional_base
+        self.pending_quantity[key] = self.pending_quantity.get(key, ZERO) + request.quantity
+        sid = request.strategy_id
+        self.pending_by_strategy[sid] = self.pending_by_strategy.get(sid, ZERO) + notional_base
 
     def reference_price(self, instrument: Instrument) -> Decimal | None:
         quote = self.quotes.get(instrument.key)
@@ -366,7 +409,8 @@ class PositionSizeCheck(RiskCheck):
 
         pos_limits = ctx.limits.position
         rate = ctx.portfolio.fx_rate(inst.currency)
-        existing = abs(ctx.portfolio.quantity_of(inst))
+        # Count unfilled orders toward the position: they are already committed.
+        existing = abs(ctx.portfolio.quantity_of(inst)) + abs(ctx.pending_for(inst))
 
         cap_base = equity * pos_limits.max_position_weight
         if pos_limits.max_position_notional is not None:
@@ -486,9 +530,26 @@ class CostEfficiencyCheck(RiskCheck):
 
 
 class PortfolioExposureCheck(RiskCheck):
-    """Caps gross exposure, position count, and per-currency concentration."""
+    """Caps gross exposure, position count, and per-currency concentration.
+
+    Reserves `headroom_buffer` of the exposure ceiling rather than sizing to it
+    exactly. Two unavoidable effects consume the difference between approval and
+    fill:
+
+    1. **Commission is paid from cash**, reducing equity. Sizing to exactly
+       `equity x max_gross` therefore lands *above* the ceiling once the fee
+       settles, because the denominator shrank.
+    2. **The fill price is not the decision price.** Orders fill on a later bar,
+       at a price moved by market drift and slippage, so realised notional
+       differs from the notional that was approved.
+
+    Neither is a modelling error -- both are inherent to trading. Sizing to the
+    exact limit guarantees marginal breaches, so the gate aims slightly below it.
+    """
 
     name = "portfolio_exposure"
+    headroom_buffer = Decimal("0.02")
+    """Fraction of the exposure ceiling held back for cost and fill drift."""
 
     def evaluate(self, request, ctx):
         if ctx.is_reducing(request):
@@ -502,12 +563,19 @@ class PortfolioExposureCheck(RiskCheck):
         if equity <= 0:
             return RiskVerdict.reject(self.name, f"non-positive equity {equity}")
 
-        is_new = pf.quantity_of(inst) == 0
+        is_new = pf.quantity_of(inst) == 0 and ctx.pending_for(inst) == 0
         if is_new:
-            if len(pf.open_positions) >= limits.max_open_positions:
+            # Pending orders in names not yet held are positions-in-waiting.
+            pending_new = sum(
+                1
+                for key in ctx.pending_quantity
+                if key not in pf.open_positions and ctx.pending_quantity[key] != 0
+            )
+            committed_positions = len(pf.open_positions) + pending_new
+            if committed_positions >= limits.max_open_positions:
                 return RiskVerdict.reject(
                     self.name,
-                    f"already holding {len(pf.open_positions)} positions "
+                    f"already holding or committed to {committed_positions} positions "
                     f"(max {limits.max_open_positions})",
                 )
             if ctx.state.new_positions_today >= limits.max_new_positions_per_day:
@@ -519,19 +587,26 @@ class PortfolioExposureCheck(RiskCheck):
 
         rate = pf.fx_rate(inst.currency)
         per_share_base = ref * rate * inst.multiplier
-        headroom_base = equity * limits.max_gross_exposure - pf.gross_exposure
+        ceiling = equity * limits.max_gross_exposure * (Decimal("1") - self.headroom_buffer)
+        committed = pf.gross_exposure + ctx.pending_exposure_base
+        headroom_base = ceiling - committed
         if headroom_base <= 0:
             return RiskVerdict.reject(
                 self.name,
-                f"gross exposure {pf.gross_exposure} already at the "
-                f"{limits.max_gross_exposure}x ceiling on equity {equity}",
+                f"gross exposure {committed} (including {ctx.pending_exposure_base} "
+                f"in unfilled orders) already at the {limits.max_gross_exposure}x "
+                f"ceiling on equity {equity}",
             )
         allowed = round_to_lot(safe_div(headroom_base, per_share_base), inst.lot_size)
 
         ccy = inst.currency.upper()
         if ccy != pf.base_currency:
             exposures = pf.exposure_by_currency()
-            current_ccy = abs(exposures.get(ccy, ZERO))
+            pending_ccy = sum(
+                (value for key, value in ctx.pending_exposure.items() if key.endswith(f".{ccy}")),
+                ZERO,
+            )
+            current_ccy = abs(exposures.get(ccy, ZERO)) + pending_ccy
             ccy_headroom = equity * limits.max_currency_exposure - current_ccy
             if ccy_headroom <= 0:
                 return RiskVerdict.reject(
@@ -576,7 +651,9 @@ class StrategyBudgetCheck(RiskCheck):
         ref = ctx.reference_price(inst)
         if ref is None or ref <= 0:
             return RiskVerdict.reject(self.name, "no reference price for budget check")
-        used = pf.exposure_by_strategy().get(request.strategy_id, ZERO)
+        used = pf.exposure_by_strategy().get(
+            request.strategy_id, ZERO
+        ) + ctx.pending_by_strategy.get(request.strategy_id, ZERO)
         headroom = equity * budget - used
         if headroom <= 0:
             return RiskVerdict.reject(
