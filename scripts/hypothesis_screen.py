@@ -185,6 +185,78 @@ def main() -> None:
     print("  because they are rare, and rare effects cannot be proven with")
     print("  retail-accessible data.")
 
+    _data_cost_section(survivors)
+
+
+def _data_cost_section(survivors: list) -> None:
+    """Show what a data subscription costs relative to the expected edge.
+
+    Survivorship-bias-free history is not free, and a subscription is charged
+    per year regardless of whether the strategy trades. On a small account that
+    behaves like a large fixed drag, which per-trade cost models miss entirely.
+    """
+    from tradelab.research.feasibility import annual_economics, breakeven_account_size
+
+    by_id = {h[0]: h for h in HYPOTHESES}
+    print()
+    print("=" * 78)
+    print("DATA SUBSCRIPTION ECONOMICS (EUR 10,000 account)")
+    print("=" * 78)
+    print("""
+  Survivorship-bias-free history costs money. EODHD end-of-day, all-world,
+  including delisted tickers and Nasdaq Helsinki, is EUR 199/year -- which is
+  1.99% of a EUR 10,000 account, paid whether or not the strategy trades.
+""")
+    print(
+        f"  {'':>4} {'gross/yr':>9} {'trading':>9} {'data':>7} {'net/yr':>9} "
+        f"{'net EUR':>9} {'break-even acct':>16}"
+    )
+    print("  " + "-" * 72)
+
+    for result in survivors:
+        hid = result.name.split()[0]
+        spec = by_id.get(hid)
+        if spec is None:
+            continue
+        _, _, hold, edge, events, _ = spec
+        economics = annual_economics(
+            events_per_year=events,
+            gross_edge_bps=edge,
+            holding_days=hold,
+            positions_held=10,
+            round_trip_cost_bps=COST_BPS,
+            fixed_annual_cost=199.0,
+            account_equity=10_000.0,
+        )
+        threshold = breakeven_account_size(
+            events, edge, hold, round_trip_cost_bps=COST_BPS, fixed_annual_cost=199.0
+        )
+        threshold_text = "never" if threshold == float("inf") else f"EUR {threshold:>9,.0f}"
+        print(
+            f"  {hid:>4} {economics.gross_annual_return_pct:>8.2f}% "
+            f"{economics.trading_cost_drag_pct:>8.2f}% "
+            f"{economics.fixed_cost_drag_pct:>6.2f}% "
+            f"{economics.net_annual_return_pct:>8.2f}% "
+            f"{economics.net_annual_currency:>9,.0f} {threshold_text:>16}"
+        )
+
+    print("""
+  Read this carefully, because it cuts both ways.
+
+  The break-even account sizes sit BELOW EUR 10,000, so paying for data is
+  justified at this account size -- but only if the edges are real, and none
+  of them is validated. The subscription is a bet on the research succeeding,
+  not on a known return.
+
+  The net figures are the sobering part. The best candidate nets on the order
+  of a hundred euros a year on EUR 10,000 after data costs, with the
+  subscription consuming roughly half the gross profit. That is the honest
+  scale of what a EUR 10k systematic equity account can expect even when a
+  real edge is found.
+
+  Both improve sharply with account size: the edge scales with equity while
+  the subscription does not.""")
+
 
 if __name__ == "__main__":
     main()

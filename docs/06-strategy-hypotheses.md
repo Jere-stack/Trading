@@ -260,13 +260,45 @@ side of this bind they resolved, and how.
 
 ---
 
-## 6. What happens next
+## 6. What a data subscription costs against these edges
+
+Survivorship-bias-free history is not free. EODHD end-of-day all-world,
+including delisted tickers and Nasdaq Helsinki, is €199/year — **1.99% of a
+€10,000 account, paid whether or not the strategy trades.**
+
+| ID | Gross/yr | Trading cost | Data cost | **Net/yr** | Net € | Break-even account |
+|---|---|---|---|---|---|---|
+| H4 | 5.04% | 1.68% | 1.99% | **1.37%** | €137 | €5,923 |
+| H5 | 4.20% | 0.90% | 1.99% | **1.31%** | €131 | €6,030 |
+| H7 | 6.00% | 0.45% | 1.99% | **3.56%** | €356 | €3,586 |
+| H9 | 5.00% | 0.75% | 1.99% | **2.26%** | €226 | €4,682 |
+
+Break-even account sizes sit below €10,000, so the subscription is justified —
+**conditional on the edges being real, which none is.**
+
+The net figures set expectations honestly: **one to three hundred euros a year
+on €10,000, with data consuming a third to half of gross profit.** That is what
+a €10k systematic equity account can expect even when a real edge is found. It
+is not a reason to stop; it is a reason to be clear about why you are doing
+this. The system scales, the returns compound, and the same edge at €50,000
+pays a 0.40% data cost instead of 1.99%.
+
+**Note that these use the register's own priors, which are deliberately
+generous.** A realistic outcome after validation is lower, and the most likely
+outcome remains zero surviving strategies.
+
+---
+
+## 7. What happens next
 
 In order. Nothing skips ahead.
 
 1. **Acquire data.** Daily bars with **delisted and acquired names included** —
    survivorship-biased universes overstate returns substantially. Corporate
-   actions (splits, dividends) properly adjusted.
+   actions (splits, dividends) properly adjusted. The practical route is one
+   month of EODHD (€19.99, no commitment): download the universe, store it
+   locally with provenance, cancel, and run the protocol against the local copy.
+   TradingView cannot supply this — see `docs/04-data.md`.
 2. **Calibrate the cost model.** Measure actual median quoted spreads per
    instrument and populate `Instrument.spread_bps`. Until then every cost figure
    is a modelled default, and `require_calibrated_spread=True` should be enabled

@@ -53,9 +53,104 @@ auditor is configured to refuse, which is the intended behaviour.
 | Source | Status | Notes |
 |---|---|---|
 | **ECB reference rates** | **Working, free, keyless** | `EcbFxProvider`. 1999→present, 41 currencies. Required: a EUR account holding USD stocks cannot compute equity — and therefore cannot evaluate any risk limit — without FX. |
+| **EODHD** | **Paid, €199/yr** | End-of-day all-world *including delisted tickers* and Nasdaq Helsinki. The realistic fix for survivorship bias here. |
+| Norgate Data | Paid | Survivorship-bias-free, but US/AU/CA only — no Nordic coverage. |
+| Sharadar | Paid | Point-in-time, survivorship-bias-free, US only. |
 | Alpaca | Needs a free paper key | US only. Useful for research breadth. |
+| **TradingView** | **Not usable — see below** | No data API, and the licence forbids this use case. |
 | Stooq | Now behind a JS proof-of-work challenge | Not used. |
 | Yahoo Finance | Rate-limited/blocked from many IPs | Unreliable for a pipeline. |
+
+### TradingView: not a viable source, on two independent grounds
+
+Worth stating explicitly because it is the most common suggestion.
+
+**1. There is no data API.** TradingView publishes three APIs — Charting
+Library, Datafeed (UDF), and Broker REST — and none of them retrieves prices.
+Charting Library and Datafeed are for developers who *supply* data to a
+TradingView chart; Broker REST is for brokerages integrating *into* TradingView
+for order routing. There is no public endpoint for pulling historical bars out,
+and this has been the position for years.
+
+**2. The licence forbids this use case, however the data is obtained.** This is
+the decisive point, and it is stronger than a simple anti-scraping rule.
+TradingView's terms license market data for **display-only** use and explicitly
+prohibit "non-display" usage — naming *algorithmic decision-making, algorithmic
+trading, price referencing, and any machine-driven processes that do not involve
+direct, human-readable display*.
+
+A backtest is machine-driven, non-display use by definition. So even the
+legitimate, manual "Export chart data" button on a paid plan produces data that
+**may not be fed into this system.** The restriction comes from the exchanges
+that license data to TradingView, not from TradingView's own preferences, which
+is why no workaround exists at the user's discretion.
+
+Their terms separately prohibit automated collection by "scripts, APIs, screen
+scraping, data mining, robots or other data gathering and extraction tools",
+and enforcement is real — accounts are banned for detected automated access.
+**No scraping path is implemented in this repository, and none should be.**
+
+**3. It would not solve the actual problem anyway.** The blocker is survivorship
+bias — needing delisted and acquired names. TradingView does not serve delisted
+tickers either, so even setting aside points 1 and 2, it would deliver the same
+biased universe as IBKR with added licensing and reliability risk.
+
+TradingView remains genuinely useful for what it is designed for: **manual chart
+inspection**. Eyeballing a candidate's price history around an event, or sanity-
+checking an odd bar the quality auditor flagged, is display use and entirely
+appropriate.
+
+---
+
+## What data actually costs, and why it matters at €10k
+
+A subscription is charged **per year regardless of whether the strategy
+trades**, so on a small account it behaves like a large fixed drag. Per-trade
+cost models miss this completely, which is how a strategy that looks marginally
+profitable becomes a guaranteed loss once the tooling is paid for.
+
+`tradelab.research.feasibility.annual_economics` models it. At EODHD's €199/year
+on a €10,000 account (**1.99% of the account annually**):
+
+| Hypothesis | Gross/yr | Trading cost | Data cost | **Net/yr** | Net € | Break-even account |
+|---|---|---|---|---|---|---|
+| H4 PEAD | 5.04% | 1.68% | 1.99% | **1.37%** | €137 | €5,923 |
+| H5 index deletions | 4.20% | 0.90% | 1.99% | **1.31%** | €131 | €6,030 |
+| H7 spin-offs | 6.00% | 0.45% | 1.99% | **3.56%** | €356 | €3,586 |
+| H9 fire sales | 5.00% | 0.75% | 1.99% | **2.26%** | €226 | €4,682 |
+
+Reproduce with `.venv/bin/python scripts/hypothesis_screen.py`.
+
+**This cuts both ways, and both directions matter.**
+
+The break-even account sizes all sit **below €10,000**, so paying for data is
+justified at this account size. But it is a bet on the research succeeding, not
+on a known return — none of these edges is validated, and the priors are
+deliberately generous.
+
+The net figures are the sobering part: **the best candidates net on the order of
+one to three hundred euros a year on €10,000, with the subscription consuming a
+third to half of gross profit.** That is the honest scale of what a €10k
+systematic equity account can expect *even when a real edge is found*.
+
+Both improve sharply with size, because the edge scales with equity while the
+subscription does not. At €50,000 the same data cost is 0.40% instead of 1.99%.
+
+### The practical recommendation
+
+**Buy one month, not a year.** EODHD is €19.99 monthly with no commitment. A
+validation sprint needs the *history*, not a live feed — download the universe
+once, store it in the Parquet store with its provenance metadata, cancel, and
+run the research protocol against the local copy for as long as it takes.
+
+That turns a €199/year commitment into a **€20 one-off**, which is 0.2% of the
+account and small enough that the decision does not need to be agonised over.
+Re-subscribe for a month when the universe needs refreshing.
+
+This is also the honest sequencing: the research protocol is designed to
+*reject* most candidates, so the expected outcome of the first sprint is a set
+of rejections. Paying €20 to find that out is good value; paying €199 up front
+for a live feed you will not use is not.
 
 ---
 

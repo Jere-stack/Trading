@@ -21,7 +21,7 @@ strategies.** That is the intended state — see
 uv venv --python 3.11
 uv pip install -e ".[dev]"
 
-.venv/bin/python -m pytest tests/ -q          # 145 tests
+.venv/bin/python -m pytest tests/ -q          # 153 tests
 .venv/bin/python scripts/cost_report.py       # why costs dominate at €10k
 .venv/bin/python scripts/hypothesis_screen.py # reject hypotheses before any data
 .venv/bin/tradelab config --mode PAPER        # validate configuration
@@ -111,7 +111,7 @@ src/tradelab/
 
 docs/            Broker selection, architecture, risk, protocol, hypotheses
 scripts/         Reproducible cost and hypothesis reports
-tests/           145 tests
+tests/           153 tests
 ```
 
 Dependencies point inward only.
@@ -144,7 +144,12 @@ Dependencies point inward only.
 - **IBKR cannot serve delisted contracts**, so an IBKR-built universe is
   survivorship-biased — typically worth 1–4%/yr of spurious return, comparable
   to any edge under investigation. The quality auditor refuses such data as
-  CRITICAL. Resolving this needs a point-in-time dataset.
+  CRITICAL. Resolving this needs a paid dataset (EODHD, ~€20 for one month).
+- **TradingView cannot supply data for this system.** It has no data API, and
+  its market data is licensed display-only — explicitly excluding algorithmic
+  decision-making, so even manual chart exports may not be fed into a backtest.
+  It also has no delisted tickers, so it would not fix survivorship bias
+  anyway. See [docs/04-data.md](docs/04-data.md).
 - **`max_sector_weight` is in the config schema but not wired into a check.**
   Known gap; manage sector concentration via universe construction until closed.
 - **Most likely outcome is zero validated strategies**, which is better than
@@ -226,6 +231,27 @@ Measured on real ECB data (2023-09 → 2026-09): **EUR/USD annualised volatility
 is 6.70%, peak-to-trough 17.4%**. A strategy earning 30 bps over 12 round trips
 a year makes ~3.6% gross — unhedged USD exposure carries nearly twice that in
 uncompensated volatility.
+
+### What data costs, and why it changes the arithmetic
+
+A subscription is charged per year whether or not the strategy trades, so on a
+small account it is a large fixed drag that per-trade cost models miss entirely.
+EODHD at €199/yr is **1.99% of a €10,000 account**:
+
+| Hypothesis | Gross/yr | Data cost | **Net/yr** | Net € | Break-even account |
+|---|---|---|---|---|---|
+| H5 index deletions | 4.20% | 1.99% | **1.31%** | €131 | €6,030 |
+| H7 spin-offs | 6.00% | 1.99% | **3.56%** | €356 | €3,586 |
+| H9 fire sales | 5.00% | 1.99% | **2.26%** | €226 | €4,682 |
+
+Break-even sizes sit below €10,000, so the subscription is justified —
+conditional on the edges being real, which none is. But the net figures set
+expectations honestly: **one to three hundred euros a year on €10,000, with data
+consuming a third to half of gross profit.**
+
+**Practical route: buy one month (€19.99), not a year.** A validation sprint
+needs the history, not a live feed — download the universe once, store it with
+provenance, cancel, and run the protocol against the local copy.
 
 ---
 

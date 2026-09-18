@@ -14,11 +14,19 @@ be distinguished from noise within a decade. This constraint is routinely
 ignored, and it is why event-driven strategies with compelling economic stories
 so often fail to be *validatable* even when they might be real.
 
-These two constraints are in direct tension, which is the central bind of
+**3. Fixed cost feasibility.** A data subscription is charged per year, not per
+trade, so on a small account it behaves like a large fixed drag. EUR 199/year of
+end-of-day data is **1.99% of a EUR 10,000 account annually** -- comparable to
+or larger than the per-trade cost drag of a low-turnover strategy, and it is
+paid whether or not the strategy trades. Per-trade cost models miss this
+entirely, which is how a strategy that looks marginally profitable becomes a
+guaranteed loss once the tooling is paid for.
+
+These constraints are in direct tension, which is the central bind of
 small-account quant research: **effects that are uncrowded are usually rare, and
 rare effects cannot be validated with the data available.** A strategy must
-thread both, and most do not. Screening here makes that explicit rather than
-letting it emerge after weeks of work.
+thread all three, and most do not. Screening here makes that explicit rather
+than letting it emerge after weeks of work.
 """
 
 from __future__ import annotations
@@ -36,6 +44,146 @@ class Feasibility(StrEnum):
     COST_INFEASIBLE = "COST_INFEASIBLE"
     POWER_INFEASIBLE = "POWER_INFEASIBLE"
     INFEASIBLE_BOTH = "INFEASIBLE_BOTH"
+
+
+@dataclass(frozen=True)
+class EconomicsResult:
+    """Expected annual economics in currency terms, after all costs.
+
+    Converts a per-event edge into what the account actually earns, which is
+    the only number that can be compared against a subscription price. Two
+    effects that per-trade cost models miss are applied here:
+
+    * **Capacity truncation.** A strategy cannot capture more events than it
+      has position slots and time for. 100 signals a year with 10 slots held
+      20 days each is capped at 126 -- but with 10 slots held 120 days it is
+      capped at 21, and the other 79 signals are unreachable.
+    * **Fixed costs.** Subscriptions are paid whether or not the strategy
+      trades, so they do not scale down with a small account. They scale *up*
+      as a percentage of it.
+    """
+
+    events_available: float
+    events_captured: float
+    capacity_limited: bool
+    position_weight: float
+    net_edge_bps: float
+    gross_annual_return_pct: float
+    trading_cost_drag_pct: float
+    fixed_cost_drag_pct: float
+    net_annual_return_pct: float
+    net_annual_currency: float
+    fixed_annual_cost: float
+    account_equity: float
+
+    @property
+    def fixed_cost_share_of_gross(self) -> float:
+        """Fraction of gross profit consumed by fixed costs."""
+        if self.gross_annual_return_pct <= 0:
+            return float("inf")
+        return self.fixed_cost_drag_pct / self.gross_annual_return_pct
+
+    @property
+    def is_viable(self) -> bool:
+        return self.net_annual_return_pct > 0
+
+    def summary(self) -> str:
+        cap = " (capacity-limited)" if self.capacity_limited else ""
+        return (
+            f"{self.events_captured:.0f}/{self.events_available:.0f} events{cap}, "
+            f"net {self.net_edge_bps:.0f} bps each -> "
+            f"gross {self.gross_annual_return_pct:+.2f}%/yr, "
+            f"data {self.fixed_cost_drag_pct:.2f}%/yr, "
+            f"net {self.net_annual_return_pct:+.2f}%/yr "
+            f"(EUR {self.net_annual_currency:+,.0f})"
+        )
+
+
+def annual_economics(
+    events_per_year: float,
+    gross_edge_bps: float,
+    holding_days: float,
+    *,
+    positions_held: int = 10,
+    position_weight: float | None = None,
+    round_trip_cost_bps: float = 30.0,
+    fixed_annual_cost: float = 0.0,
+    account_equity: float = 10_000.0,
+    trading_days_per_year: int = 252,
+) -> EconomicsResult:
+    """Expected annual return in currency, after trading and fixed costs.
+
+    This is the number to compare against a data subscription price. A strategy
+    whose entire expected profit is consumed by tooling is not a strategy, and
+    the per-trade cost view alone will not show that.
+    """
+    if holding_days <= 0:
+        raise ValueError("holding_days must be positive")
+    if positions_held < 1:
+        raise ValueError("positions_held must be at least 1")
+    if account_equity <= 0:
+        raise ValueError("account_equity must be positive")
+
+    if position_weight is None:
+        position_weight = 1.0 / positions_held
+
+    # A strategy cannot trade more events than it has slots and time for.
+    max_capturable = positions_held * (trading_days_per_year / holding_days)
+    events_captured = min(events_per_year, max_capturable)
+
+    net_edge = gross_edge_bps - round_trip_cost_bps
+    gross_pct = events_captured * gross_edge_bps * position_weight / 100.0
+    trading_drag_pct = events_captured * round_trip_cost_bps * position_weight / 100.0
+    fixed_drag_pct = fixed_annual_cost / account_equity * 100.0
+    net_pct = gross_pct - trading_drag_pct - fixed_drag_pct
+
+    return EconomicsResult(
+        events_available=events_per_year,
+        events_captured=events_captured,
+        capacity_limited=events_captured < events_per_year,
+        position_weight=position_weight,
+        net_edge_bps=net_edge,
+        gross_annual_return_pct=gross_pct,
+        trading_cost_drag_pct=trading_drag_pct,
+        fixed_cost_drag_pct=fixed_drag_pct,
+        net_annual_return_pct=net_pct,
+        net_annual_currency=net_pct / 100.0 * account_equity,
+        fixed_annual_cost=fixed_annual_cost,
+        account_equity=account_equity,
+    )
+
+
+def breakeven_account_size(
+    events_per_year: float,
+    gross_edge_bps: float,
+    holding_days: float,
+    *,
+    positions_held: int = 10,
+    round_trip_cost_bps: float = 30.0,
+    fixed_annual_cost: float = 199.0,
+    trading_days_per_year: int = 252,
+) -> float:
+    """Smallest account at which a fixed annual cost is worth paying.
+
+    Because the trading edge scales with equity while a subscription does not,
+    there is a hard threshold below which paying for data destroys value no
+    matter how good the strategy is. Returns infinity when the strategy has no
+    positive edge at any size.
+    """
+    reference = annual_economics(
+        events_per_year,
+        gross_edge_bps,
+        holding_days,
+        positions_held=positions_held,
+        round_trip_cost_bps=round_trip_cost_bps,
+        fixed_annual_cost=0.0,
+        account_equity=10_000.0,
+        trading_days_per_year=trading_days_per_year,
+    )
+    edge_fraction = reference.net_annual_return_pct / 100.0
+    if edge_fraction <= 0:
+        return float("inf")
+    return fixed_annual_cost / edge_fraction
 
 
 @dataclass(frozen=True)

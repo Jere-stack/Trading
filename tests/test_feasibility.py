@@ -139,3 +139,110 @@ class TestScreen:
         r = screen("x", holding_days=45, expected_gross_edge_bps=90, events_per_year=200)
         text = r.report()
         assert "verdict" in text and "cost" in text and "power" in text
+
+
+class TestAnnualEconomics:
+    """Fixed costs behave differently from per-trade costs on a small account.
+
+    A subscription is paid whether or not the strategy trades, so it does not
+    scale down with the account -- it scales *up* as a percentage of it. Per-trade
+    cost models miss this entirely.
+    """
+
+    def test_fixed_cost_consumes_a_large_share_of_a_small_account(self):
+        """Pins the headline: EUR 199/yr is ~2% of a EUR 10k account."""
+        from tradelab.research.feasibility import annual_economics
+
+        result = annual_economics(
+            events_per_year=30,
+            gross_edge_bps=140,
+            holding_days=20,
+            positions_held=10,
+            round_trip_cost_bps=30,
+            fixed_annual_cost=199.0,
+            account_equity=10_000.0,
+        )
+        assert result.fixed_cost_drag_pct == pytest.approx(1.99, abs=0.01)
+        # Data cost must consume a material share of gross profit, not a rounding.
+        assert 0.3 < result.fixed_cost_share_of_gross < 0.7
+
+    def test_same_subscription_is_trivial_on_a_large_account(self):
+        """The same cost that bites at EUR 10k is negligible at EUR 200k."""
+        from tradelab.research.feasibility import annual_economics
+
+        small = annual_economics(30, 140, 20, fixed_annual_cost=199.0, account_equity=10_000.0)
+        large = annual_economics(30, 140, 20, fixed_annual_cost=199.0, account_equity=200_000.0)
+        # The drag scales exactly inversely with equity: 20x the account, 1/20th
+        # the drag. That exact inverse relationship IS the point -- a fixed cost
+        # does not shrink with the account, so it grows as a share of it.
+        assert small.fixed_cost_drag_pct == pytest.approx(20 * large.fixed_cost_drag_pct, rel=1e-9)
+        assert small.fixed_cost_drag_pct == pytest.approx(1.99, abs=0.01)
+        assert large.fixed_cost_drag_pct == pytest.approx(0.0995, abs=0.001)
+        assert large.net_annual_return_pct > small.net_annual_return_pct
+
+    def test_capacity_truncates_reachable_events(self):
+        """Pins: a long holding period makes most signals unreachable.
+
+        10 slots held 120 days each can capture ~21 events a year. Signals
+        beyond that are not a bigger edge -- they are unreachable.
+        """
+        from tradelab.research.feasibility import annual_economics
+
+        result = annual_economics(
+            events_per_year=200, gross_edge_bps=400, holding_days=120, positions_held=10
+        )
+        assert result.capacity_limited
+        assert result.events_captured == pytest.approx(21.0, abs=1.0)
+        assert result.events_captured < result.events_available
+
+    def test_short_holding_period_is_not_capacity_limited(self):
+        from tradelab.research.feasibility import annual_economics
+
+        result = annual_economics(
+            events_per_year=30, gross_edge_bps=140, holding_days=20, positions_held=10
+        )
+        assert not result.capacity_limited
+        assert result.events_captured == 30
+
+    def test_fixed_cost_can_turn_a_profitable_strategy_negative(self):
+        """The failure this function exists to surface."""
+        from tradelab.research.feasibility import annual_economics
+
+        free = annual_economics(
+            10, 60, 30, positions_held=10, fixed_annual_cost=0.0, account_equity=5_000.0
+        )
+        paid = annual_economics(
+            10, 60, 30, positions_held=10, fixed_annual_cost=199.0, account_equity=5_000.0
+        )
+        assert free.is_viable
+        assert not paid.is_viable
+
+    def test_breakeven_account_size_is_where_the_edge_covers_the_fee(self):
+        from tradelab.research.feasibility import annual_economics, breakeven_account_size
+
+        threshold = breakeven_account_size(30, 140, 20, fixed_annual_cost=199.0)
+        assert 3_000 < threshold < 12_000
+        just_above = annual_economics(
+            30, 140, 20, fixed_annual_cost=199.0, account_equity=threshold * 1.1
+        )
+        just_below = annual_economics(
+            30, 140, 20, fixed_annual_cost=199.0, account_equity=threshold * 0.9
+        )
+        assert just_above.is_viable
+        assert not just_below.is_viable
+
+    def test_no_edge_means_no_account_size_justifies_the_fee(self):
+        """Pins: a subscription cannot rescue a strategy with no edge."""
+        from tradelab.research.feasibility import breakeven_account_size
+
+        assert breakeven_account_size(50, 20, 5, round_trip_cost_bps=30) == float("inf")
+
+    def test_rejects_invalid_inputs(self):
+        from tradelab.research.feasibility import annual_economics
+
+        with pytest.raises(ValueError):
+            annual_economics(30, 140, 0)
+        with pytest.raises(ValueError):
+            annual_economics(30, 140, 20, positions_held=0)
+        with pytest.raises(ValueError):
+            annual_economics(30, 140, 20, account_equity=0)
