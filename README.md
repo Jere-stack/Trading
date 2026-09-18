@@ -21,7 +21,7 @@ strategies.** That is the intended state — see
 uv venv --python 3.11
 uv pip install -e ".[dev]"
 
-.venv/bin/python -m pytest tests/ -q          # 123 tests
+.venv/bin/python -m pytest tests/ -q          # 145 tests
 .venv/bin/python scripts/cost_report.py       # why costs dominate at €10k
 .venv/bin/python scripts/hypothesis_screen.py # reject hypotheses before any data
 .venv/bin/tradelab config --mode PAPER        # validate configuration
@@ -106,11 +106,12 @@ src/tradelab/
 ├── strategy/    Strategy interface. Sandboxed by construction.
 ├── engine/      Backtest and live loops.
 ├── data/        Schema, quality audit, calibration, providers, Parquet store.
+├── engine/      Backtest replay and the live/paper runner.
 └── research/    Metrics, feasibility screening, statistical validation.
 
 docs/            Broker selection, architecture, risk, protocol, hypotheses
 scripts/         Reproducible cost and hypothesis reports
-tests/           123 tests
+tests/           145 tests
 ```
 
 Dependencies point inward only.
@@ -158,6 +159,36 @@ Stocks and ETFs only. No options, futures, crypto, CFDs or leverage — enforced
 by the `AssetClass` enum and `MandateCheck`, so adding them requires a
 reviewable change rather than passing a different contract type through the
 stack. Long-only by default.
+
+---
+
+## Restart safety
+
+An automated system restarts — on crashes, deploys, IB Gateway's nightly
+re-authentication. `LiveRunner` runs a startup sequence whose order is
+safety-critical: connect → restore risk state → reconcile against the broker →
+seed the ledger → begin the loop. A failure at any step halts rather than
+continuing degraded, because not trading costs an opportunity while trading on
+wrong state costs capital.
+
+**A restored HARD halt stays a HARD halt.** A system that trips a drawdown kill
+switch and then restarts must not come back up trading:
+
+```
+SESSION 1  order submitted; HARD halt tripped; process crashes
+SESSION 2  CRITICAL startup: restored a HARD halt: drawdown 15% breached.
+                     Restarting is not a re-arm.
+           WARNING  risk_reject: buyer BUY 10 TEST: HARD halt active
+           orders submitted after restart: 0
+```
+
+Without persisted risk state, `day_start_equity` resets on restart — making the
+daily loss limit unenforceable by the simple expedient of crashing.
+
+```bash
+tradelab status --mode PAPER    # risk state, halts, recent events
+tradelab rearm --operator jere  # clear a HARD halt, with confirmation
+```
 
 ---
 

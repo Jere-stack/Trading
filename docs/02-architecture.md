@@ -261,6 +261,45 @@ primary result, not diagnostics — a strategy whose orders are 80% rejected on
 cost grounds is not a strategy with a small edge, it is one that cannot be
 traded at this size, and the equity curve alone will not tell you that.
 
+### Restart safety
+
+Implemented in `LiveRunner` (`src/tradelab/engine/live.py`) and `StateStore`
+(`src/tradelab/portfolio/state.py`), pinned by `tests/test_live_runner.py`.
+
+An automated system restarts — on a crash, a deploy, IB Gateway's nightly
+re-authentication. Two things must survive, and losing either has a concrete
+consequence:
+
+| Lost across restart | Consequence |
+|---|---|
+| Risk state | `day_start_equity` resets, so a system already 3% down starts with a fresh 3% of rope. **The daily loss limit becomes unenforceable by crashing.** |
+| Order/fill history | Reconciliation has nothing to compare against, so a restart cannot detect a fill that arrived while it was down. |
+
+**A restored HARD halt stays a HARD halt.** Restarting is not a re-arm — a
+system that trips a drawdown kill switch and then restarts must not come back up
+trading. Clearing it requires `tradelab rearm --operator <name>`, which prompts
+for confirmation and records who did it.
+
+State is SQLite with `journal_mode=WAL` and `synchronous=FULL`: durability
+matters far more than write throughput here, and losing the last committed fill
+to an OS buffer is exactly the failure this prevents. Decimals are stored as
+TEXT, because SQLite's REAL is a float and routing the ledger through one
+reintroduces the representation error `Decimal` exists to avoid.
+
+Positions are **derived from the fill log** rather than stored, so the local
+view cannot drift from the fills that justify it. The broker remains
+authoritative; this is what reconciliation compares against.
+
+### Operational commands
+
+```bash
+tradelab status --mode PAPER    # persisted risk state, halts, recent events
+tradelab rearm --operator jere  # clear a HARD halt, with confirmation
+tradelab check-broker           # read-only connection and position check
+```
+
+Run `tradelab status` before starting a session and after any unexpected stop.
+
 ---
 
 ## Deliberate limitations

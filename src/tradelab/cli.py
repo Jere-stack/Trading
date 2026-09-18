@@ -321,6 +321,110 @@ def data_fx(
     )
 
 
+@app.command("status")
+def status(
+    mode: str = typer.Option("PAPER", help="PAPER | LIVE"),
+    config_dir: Path = typer.Option(Path("config")),
+    events: int = typer.Option(15, help="Recent events to show"),
+) -> None:
+    """Show persisted risk state, halts and recent events.
+
+    Run this before starting a session and after any unexpected stop. A HARD
+    halt shown here means a human must clear it explicitly -- restarting will
+    not, and must not, clear it.
+    """
+    from tradelab.config.settings import load_settings
+    from tradelab.portfolio.state import StateStore
+    from tradelab.risk.killswitch import HaltLevel
+
+    settings = load_settings(config_dir, RunMode(mode.upper()))
+    if not settings.state_path.exists():
+        typer.secho(
+            f"no state file at {settings.state_path}: this would be a first run",
+            fg=typer.colors.YELLOW,
+        )
+        raise typer.Exit()
+
+    store = StateStore(settings.state_path)
+    state = store.load_risk_state()
+    if state is None:
+        typer.secho("state file exists but holds no risk state", fg=typer.colors.YELLOW)
+        raise typer.Exit()
+
+    typer.echo(f"session            {state.session_date}")
+    typer.echo(f"day start equity   {state.day_start_equity}")
+    typer.echo(f"peak equity        {state.peak_equity}")
+    typer.echo(f"orders today       {state.orders_today}")
+    typer.echo(f"consecutive losses {state.consecutive_losing_days}")
+
+    level = state.kill_switch.level
+    if level is HaltLevel.HARD:
+        typer.secho(
+            f"\nHARD HALT: {state.kill_switch.current.reason}\n"
+            "Trading is blocked, including exits. A human must re-arm this "
+            "explicitly; restarting will not clear it.",
+            fg=typer.colors.RED,
+        )
+    elif level is HaltLevel.SOFT:
+        typer.secho(
+            f"\nSOFT HALT: {state.kill_switch.current.reason}\n"
+            "New risk is blocked; exits are still allowed. Clears next session.",
+            fg=typer.colors.YELLOW,
+        )
+    else:
+        typer.secho("\nno halt active", fg=typer.colors.GREEN)
+
+    positions = store.position_quantities()
+    typer.echo(f"\nledger positions ({len(positions)}):")
+    for key, quantity in sorted(positions.items()):
+        typer.echo(f"  {key}: {quantity}")
+
+    typer.echo(f"\nrecent events (newest first, {events}):")
+    for event in store.recent_events(events):
+        typer.echo(
+            f"  [{event['timestamp'][:19]}] {event['severity']:<8} "
+            f"{event['kind']}: {event['message'][:90]}"
+        )
+
+
+@app.command("rearm")
+def rearm(
+    operator: str = typer.Option(..., help="Your name, for the audit trail"),
+    mode: str = typer.Option("PAPER", help="PAPER | LIVE"),
+    config_dir: Path = typer.Option(Path("config")),
+) -> None:
+    """Clear a HARD halt after investigating the cause.
+
+    Deliberately manual and deliberately requires naming yourself. The value of
+    a hard kill switch is that a person looks at what happened before capital is
+    risked again; an automatic re-arm would make it a pause button.
+    """
+    from tradelab.config.settings import load_settings
+    from tradelab.portfolio.state import StateStore
+    from tradelab.risk.killswitch import HaltLevel
+
+    settings = load_settings(config_dir, RunMode(mode.upper()))
+    store = StateStore(settings.state_path)
+    state = store.load_risk_state()
+    if state is None or state.kill_switch.level is HaltLevel.NONE:
+        typer.secho("no halt is active; nothing to re-arm", fg=typer.colors.YELLOW)
+        raise typer.Exit()
+
+    reason = state.kill_switch.current.reason
+    typer.secho(f"clearing halt: {reason}", fg=typer.colors.YELLOW)
+    if not typer.confirm("Have you investigated the cause and confirmed it is safe to resume?"):
+        typer.echo("aborted; halt left in place")
+        raise typer.Exit(code=1)
+
+    from datetime import UTC, datetime
+
+    now = datetime.now(UTC)
+    state.kill_switch.reset(operator, now)
+    store.save_risk_state(state)
+    store.log_event("rearm", f"halt cleared by {operator} (was: {reason})", "WARNING", None, now)
+    typer.secho(f"halt cleared by {operator}", fg=typer.colors.GREEN)
+
+
 @app.command("check-broker")
 def check_broker(
     mode: str = typer.Option("PAPER", help="PAPER | LIVE"),
