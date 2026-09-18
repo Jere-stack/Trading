@@ -87,6 +87,240 @@ def screen() -> None:
     run_screen()
 
 
+data_app = typer.Typer(help="Market data: fetch, audit and calibrate.", no_args_is_help=True)
+app.add_typer(data_app, name="data")
+
+
+@data_app.command("fetch")
+def data_fetch(
+    dataset: str = typer.Option(..., help="Name to store the dataset under"),
+    symbols: str = typer.Option(..., help="Comma-separated symbols"),
+    years: int = typer.Option(10, help="Years of history to request"),
+    currency: str = typer.Option("USD"),
+    exchange: str = typer.Option("SMART", help="SMART, HEX, NASDAQ, ..."),
+    root: Path = typer.Option(Path("data")),
+    host: str = typer.Option("127.0.0.1"),
+    port: int = typer.Option(7497, help="7497 paper, 7496 live"),
+    client_id: int = typer.Option(11, help="Use a different id than the trading session"),
+    overwrite: bool = typer.Option(False, help="Replace an existing dataset"),
+) -> None:
+    """Fetch historical bars from IBKR and store them with provenance.
+
+    Requires IB Gateway running and `uv pip install -e '.[ibkr]'`.
+
+    The fetch is deliberately slow: IBKR throttles historical requests and
+    exceeding the limit drops the connection rather than returning an error.
+    Expect roughly 11 seconds per request chunk.
+    """
+    from datetime import UTC, datetime, timedelta
+
+    from tradelab.core.enums import Venue
+    from tradelab.data.providers.base import ProviderError
+    from tradelab.data.providers.ibkr import IbkrBarProvider
+    from tradelab.data.quality import audit
+    from tradelab.data.schema import BarSetMetadata
+    from tradelab.data.store import BarStore
+
+    try:
+        import ib_async
+    except ImportError as exc:
+        typer.secho(
+            "ib_async is not installed. Install with: uv pip install -e '.[ibkr]'",
+            fg=typer.colors.RED,
+            err=True,
+        )
+        raise typer.Exit(code=1) from exc
+
+    tickers = [s.strip().upper() for s in symbols.split(",") if s.strip()]
+    if not tickers:
+        typer.secho("no symbols given", fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=1)
+
+    ib = ib_async.IB()
+    try:
+        ib.connect(host, port, clientId=client_id, timeout=30, readonly=True)
+    except Exception as exc:
+        typer.secho(
+            f"could not connect to IB Gateway at {host}:{port}: {exc}\n"
+            "Check it is running, the API is enabled, and today's "
+            "re-authentication is done.",
+            fg=typer.colors.RED,
+            err=True,
+        )
+        raise typer.Exit(code=1) from exc
+
+    try:
+        provider = IbkrBarProvider(ib, currency=currency, venue=Venue(exchange.upper()))
+        end = datetime.now(UTC)
+        start = end - timedelta(days=365 * years)
+        typer.echo(f"fetching {len(tickers)} symbol(s) from {provider.describe()}...")
+        try:
+            frame = provider.fetch(tickers, start, end, "1 day")
+        except ProviderError as exc:
+            typer.secho(str(exc), fg=typer.colors.RED, err=True)
+            raise typer.Exit(code=1) from exc
+
+        metadata = BarSetMetadata(
+            provider=provider.name,
+            adjustment=provider.adjustment,
+            bar_size="1 day",
+            currency=currency.upper(),
+            fetched_at=datetime.now(UTC),
+            symbols=tuple(sorted(frame["symbol"].unique())),
+            start=frame["timestamp"].min().to_pydatetime(),
+            end=frame["timestamp"].max().to_pydatetime(),
+            includes_delisted=provider.includes_delisted,
+            notes=f"fetched via CLI, exchange={exchange}",
+        )
+        path = BarStore(root).write(dataset, frame, metadata, overwrite=overwrite)
+        typer.secho(
+            f"stored {len(frame):,} bars for {len(metadata.symbols)} symbol(s) at {path}",
+            fg=typer.colors.GREEN,
+        )
+
+        report = audit(frame, adjustment=provider.adjustment)
+        typer.echo("\n" + report.summary())
+        if report.critical:
+            typer.secho(
+                "\nThis dataset has CRITICAL issues and is not safe to draw "
+                "conclusions from. IBKR cannot serve delisted contracts, so an "
+                "IBKR-built universe is survivorship-biased -- see docs/04-data.md.",
+                fg=typer.colors.RED,
+            )
+    finally:
+        ib.disconnect()
+
+
+@data_app.command("audit")
+def data_audit(
+    dataset: str = typer.Option(..., help="Dataset name under <root>/bars/"),
+    root: Path = typer.Option(Path("data"), help="Data root directory"),
+    strict: bool = typer.Option(True, help="Exit non-zero on any CRITICAL issue"),
+) -> None:
+    """Audit a stored dataset for the five ways market data lies.
+
+    Run this before any research. Data problems do not crash -- they change the
+    answer, almost always in the flattering direction.
+    """
+    from tradelab.data.quality import audit
+    from tradelab.data.store import BarStore
+
+    store = BarStore(root)
+    try:
+        frame = store.read(dataset)
+        metadata = store.metadata(dataset)
+    except (FileNotFoundError, OSError) as exc:
+        typer.secho(str(exc), fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=1) from exc
+
+    typer.echo(
+        f"dataset '{dataset}': {metadata.provider}, "
+        f"adjustment={metadata.adjustment.value}, "
+        f"includes_delisted={metadata.includes_delisted}"
+    )
+    report = audit(frame, adjustment=metadata.adjustment)
+    typer.echo(report.summary())
+
+    if report.critical:
+        typer.secho(
+            f"\n{len(report.critical)} CRITICAL issue(s): this data is not safe to "
+            "draw conclusions from.",
+            fg=typer.colors.RED,
+        )
+        if strict:
+            raise typer.Exit(code=1)
+    elif report.warnings:
+        typer.secho(
+            f"\n{len(report.warnings)} warning(s) -- read them before proceeding.",
+            fg=typer.colors.YELLOW,
+        )
+    else:
+        typer.secho("\nno issues detected", fg=typer.colors.GREEN)
+
+
+@data_app.command("calibrate")
+def data_calibrate(
+    dataset: str = typer.Option(..., help="Dataset name under <root>/bars/"),
+    root: Path = typer.Option(Path("data"), help="Data root directory"),
+    notional: float = typer.Option(1000.0, help="Position size to screen against"),
+    max_cost_bps: float = typer.Option(35.0, help="One-way cost budget in bps"),
+    lookback: int = typer.Option(252, help="Bars used for the estimate"),
+) -> None:
+    """Measure ADV, volatility and spread, then screen on affordability.
+
+    This is what removes the standing caveat that every cost figure is a
+    modelled default.
+    """
+    from tradelab.data.calibration import calibrate, screen_universe
+    from tradelab.data.store import BarStore
+
+    store = BarStore(root)
+    try:
+        frame = store.read(dataset)
+    except (FileNotFoundError, OSError) as exc:
+        typer.secho(str(exc), fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=1) from exc
+
+    stats = calibrate(frame, lookback=lookback)
+    if not stats:
+        typer.secho("no symbol had enough history to calibrate", fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=1)
+
+    typer.echo(f"calibrated {len(stats)} instrument(s) over {lookback} bars:\n")
+    for s in sorted(stats.values(), key=lambda x: -x.adv_currency):
+        typer.echo(f"  {s.summary()}")
+
+    screen = screen_universe(stats, position_notional=notional, max_cost_bps=max_cost_bps)
+    typer.echo(f"\n{screen.summary()}")
+    if screen.tradable:
+        names = ", ".join(s.symbol for s in screen.tradable)
+        typer.secho(f"\ntradable: {names}", fg=typer.colors.GREEN)
+    else:
+        typer.secho(
+            "\nnothing in this universe is affordable at that position size",
+            fg=typer.colors.RED,
+        )
+
+
+@data_app.command("fx")
+def data_fx(
+    base: str = typer.Option("EUR"),
+    quote: str = typer.Option("USD"),
+    years: int = typer.Option(3, help="Years of history to summarise"),
+) -> None:
+    """Fetch ECB reference rates and report the FX risk they imply."""
+    import numpy as np
+
+    from tradelab.data.providers.base import ProviderError
+    from tradelab.data.providers.ecb_fx import EcbFxProvider
+
+    provider = EcbFxProvider()
+    try:
+        history = provider.load()
+        end = history.index.max().to_pydatetime()
+        start = end.replace(year=end.year - years)
+        series = provider.rates(base, quote, start, end)
+    except ProviderError as exc:
+        typer.secho(str(exc), fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=1) from exc
+
+    returns = np.diff(np.log(series.to_numpy()))
+    vol = float(returns.std() * np.sqrt(252))
+    typer.echo(
+        f"{base}/{quote}: {len(series)} observations "
+        f"{series.index.min():%Y-%m-%d} -> {series.index.max():%Y-%m-%d}"
+    )
+    typer.echo(f"  last {series.iloc[-1]:.4f}  min {series.min():.4f}  max {series.max():.4f}")
+    typer.echo(f"  annualised volatility {vol:.2%}")
+    typer.echo(f"  peak-to-trough {(series.max() / series.min() - 1):.1%}")
+    typer.secho(
+        f"\n  Unhedged {quote} exposure carries {vol:.1%} annual volatility, "
+        "uncompensated.\n  A strategy earning 30 bps over 12 round trips a year "
+        "makes ~3.6% gross.",
+        fg=typer.colors.YELLOW,
+    )
+
+
 @app.command("check-broker")
 def check_broker(
     mode: str = typer.Option("PAPER", help="PAPER | LIVE"),

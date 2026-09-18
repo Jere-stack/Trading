@@ -21,7 +21,7 @@ strategies.** That is the intended state — see
 uv venv --python 3.11
 uv pip install -e ".[dev]"
 
-.venv/bin/python -m pytest tests/ -q          # 89 tests
+.venv/bin/python -m pytest tests/ -q          # 123 tests
 .venv/bin/python scripts/cost_report.py       # why costs dominate at €10k
 .venv/bin/python scripts/hypothesis_screen.py # reject hypotheses before any data
 .venv/bin/tradelab config --mode PAPER        # validate configuration
@@ -105,11 +105,12 @@ src/tradelab/
 ├── execution/   Broker protocol, pessimistic simulator, IBKR adapter.
 ├── strategy/    Strategy interface. Sandboxed by construction.
 ├── engine/      Backtest and live loops.
+├── data/        Schema, quality audit, calibration, providers, Parquet store.
 └── research/    Metrics, feasibility screening, statistical validation.
 
 docs/            Broker selection, architecture, risk, protocol, hypotheses
 scripts/         Reproducible cost and hypothesis reports
-tests/           89 tests
+tests/           123 tests
 ```
 
 Dependencies point inward only.
@@ -123,6 +124,7 @@ Dependencies point inward only.
 | [01 Broker selection](docs/01-broker-selection.md) | Why IBKR Ireland; full cost analysis; why Alpaca's EU entity doesn't apply |
 | [02 Architecture](docs/02-architecture.md) | Control flow, tech stack, paper→live switching, promotion gates |
 | [03 Risk management](docs/03-risk-management.md) | The 13 checks, kill-switch semantics, known gaps |
+| [04 Market data](docs/04-data.md) | Sources, quality audit, spread calibration, survivorship bias |
 | [05 Research protocol](docs/05-research-protocol.md) | The 10-stage validation gauntlet and its hard gates |
 | [06 Strategy hypotheses](docs/06-strategy-hypotheses.md) | 10 candidates, 6 rejected pre-data, 4 pending |
 
@@ -134,13 +136,16 @@ Dependencies point inward only.
   strategy needs ~2.7 years to be distinguished from zero. The paper period
   catches implementation bugs and calibrates the cost model — necessary, but not
   statistical evidence.
-- **All cost figures are modelled defaults** until calibrated against real IBKR
-  statements. A cost model never diffed against a statement is a guess, however
-  precise it looks.
+- **Cost figures are modelled defaults until calibrated.** `tradelab data
+  calibrate` measures ADV, volatility and spread from bars, but the final check
+  is diffing modelled cost against real IBKR statements. A cost model never
+  diffed against a statement is a guess, however precise it looks.
+- **IBKR cannot serve delisted contracts**, so an IBKR-built universe is
+  survivorship-biased — typically worth 1–4%/yr of spurious return, comparable
+  to any edge under investigation. The quality auditor refuses such data as
+  CRITICAL. Resolving this needs a point-in-time dataset.
 - **`max_sector_weight` is in the config schema but not wired into a check.**
   Known gap; manage sector concentration via universe construction until closed.
-- **No data pipeline yet.** Strategy validation is blocked on acquiring daily
-  bars with delisted names included.
 - **Most likely outcome is zero validated strategies**, which is better than
   deploying an overfitted one. At ~€100k the cost constraint relaxes and several
   rejected candidates re-enter feasibility.
@@ -153,6 +158,43 @@ Stocks and ETFs only. No options, futures, crypto, CFDs or leverage — enforced
 by the `AssetClass` enum and `MandateCheck`, so adding them requires a
 reviewable change rather than passing a different contract type through the
 stack. Long-only by default.
+
+---
+
+## Data layer
+
+```bash
+.venv/bin/tradelab data fetch --dataset us-liquid --symbols AAPL,MSFT,NVDA
+.venv/bin/tradelab data audit --dataset us-liquid       # refuses on CRITICAL
+.venv/bin/tradelab data calibrate --dataset us-liquid   # measures the cost model
+.venv/bin/tradelab data fx --base EUR --quote USD       # real ECB rates
+```
+
+**The estimator choice turned out to be load-bearing.** Spread cannot be
+observed in OHLCV data, so it must be estimated. Validated against simulated
+bars with a *known* injected spread
+(`scripts/validate_spread_estimators.py`):
+
+| True spread | Corwin-Schultz | Abdi-Ranaldo |
+|---|---|---|
+| 5 bps | **60.9** | 7.8 |
+| 25 bps | **71.5** | 26.8 |
+| 200 bps | 204.2 | 201.3 |
+
+Corwin-Schultz — the better-known estimator — carries a **~60 bps bias floor**.
+Applied to liquid names it reports 60 bps where the truth is 5, which exceeds
+the 35 bps cost budget and would reject the entire liquid universe as
+untradable. Silently, and with the appearance of rigour. Abdi-Ranaldo is the
+default.
+
+The generalisable lesson: *"take the more conservative of two estimates" is
+sound only when both are unbiased.* When one has a systematic floor, the maximum
+inherits the bias rather than the caution.
+
+Measured on real ECB data (2023-09 → 2026-09): **EUR/USD annualised volatility
+is 6.70%, peak-to-trough 17.4%**. A strategy earning 30 bps over 12 round trips
+a year makes ~3.6% gross — unhedged USD exposure carries nearly twice that in
+uncompensated volatility.
 
 ---
 
