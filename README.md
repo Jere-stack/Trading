@@ -130,6 +130,7 @@ Dependencies point inward only.
 | [08 What's testable](docs/08-testable-with-this-data.md) | Which hypotheses the data supports; merger arb built and rejected |
 | [09 Roadmap](docs/09-roadmap.md) | Strategy, end goal, ordered next steps, AI architecture |
 | [10 Paper trading](docs/10-paper-trading.md) | First run, four FX defects it surfaced, why gross exposure caps at 0.80x |
+| [11 Research ledger](docs/11-research-ledger.md) | Append-only trial record; why the DSR needs it and how it resists revision |
 | [05 Research protocol](docs/05-research-protocol.md) | The 10-stage validation gauntlet and its hard gates |
 | [06 Strategy hypotheses](docs/06-strategy-hypotheses.md) | 10 candidates, 6 rejected pre-data, 4 pending |
 

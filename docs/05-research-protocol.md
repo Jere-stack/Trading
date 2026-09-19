@@ -34,7 +34,18 @@ that has not yet been rejected.**
 
 ## Stage 0 — Pre-registration (before any data)
 
-Write the hypothesis down *first*, in `docs/06-strategy-hypotheses.md`:
+Write the hypothesis down *first*, in `docs/06-strategy-hypotheses.md`, and
+record it in the append-only ledger so the trial count starts accruing from the
+same moment the research does:
+
+```python
+ResearchLedger("research/ledger.jsonl").record_hypothesis(
+    "N2-dividend-cut-drift", statement=..., rationale=...
+)
+```
+
+The ledger refuses a hypothesis with no stated mechanism, which is item 1
+below. See [11 Research ledger](11-research-ledger.md).
 
 1. **Economic mechanism.** Who is on the other side of this trade, and why do
    they accept a worse price? If there is no answer, there is no edge — only a
@@ -46,7 +57,9 @@ Write the hypothesis down *first*, in `docs/06-strategy-hypotheses.md`:
    after seeing results is not a prior.
 4. **Parameters you will test, and the count.** This is the `n_trials` that the
    Deflated Sharpe Ratio needs. Understating it invalidates everything
-   downstream — the honesty of this number *is* the protocol.
+   downstream — the honesty of this number *is* the protocol. It is no longer
+   kept in anyone's head: `ledger.record_trial(..., n_configs=36)` on every run,
+   including the failed ones, and the count is whatever the record sums to.
 5. **Kill criteria, defined in advance.** What result makes you abandon this?
    Deciding afterwards is how a failed test becomes "needs more tuning".
 
@@ -119,6 +132,16 @@ Requirements to pass:
 Apply `deflated_sharpe_ratio` with the **honest** trial count: every parameter
 combination, every universe variant, every signal definition you tried,
 including the ones you discarded.
+
+Call it through `deflate_from_ledger`, so `n_trials` is read from the
+append-only record rather than chosen at the point of reporting:
+
+```python
+result = deflate_from_ledger(returns, ledger, "N2-dividend-cut-drift")
+```
+
+Use `project_wide=True` when the claim is "this is the best thing we found",
+because that is the selection that actually occurred.
 
 Requirement: **DSR > 0.95.**
 

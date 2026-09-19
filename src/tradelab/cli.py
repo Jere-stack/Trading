@@ -606,5 +606,55 @@ def check_broker(
         broker.disconnect()
 
 
+@app.command()
+def ledger(
+    path: Path = typer.Option(Path("research/ledger.jsonl"), help="Ledger file"),
+    hypothesis: str = typer.Option("", help="Show entries for one hypothesis only"),
+) -> None:
+    """Show the research ledger and verify its hash chain.
+
+    The trial count printed here is the `n_trials` any Deflated Sharpe Ratio in
+    this project must use. It is append-only and chained, so an edited or
+    removed entry is reported rather than silently accepted.
+    """
+    from tradelab.research.ledger import LedgerIntegrityError, ResearchLedger
+
+    book = ResearchLedger(path)
+    try:
+        verified = book.verify()
+    except LedgerIntegrityError as exc:
+        typer.secho(f"LEDGER INTEGRITY FAILURE\n  {exc}", fg=typer.colors.RED, err=True)
+        typer.secho(
+            "\nEvery result deflated against this ledger is now unreliable. "
+            "Recover the file from git history before trusting any trial count.",
+            fg=typer.colors.RED,
+            err=True,
+        )
+        raise typer.Exit(code=1) from exc
+
+    if not verified:
+        typer.secho(f"no ledger at {path}; run scripts/seed_ledger.py", fg=typer.colors.YELLOW)
+        raise typer.Exit(code=1)
+
+    if hypothesis:
+        rows = [e for e in book.entries() if e.hypothesis_id == hypothesis]
+        if not rows:
+            typer.secho(f"no entries for {hypothesis!r}", fg=typer.colors.YELLOW)
+            raise typer.Exit(code=1)
+        typer.echo(f"{hypothesis}  ({book.trial_count(hypothesis)} configurations evaluated)\n")
+        for entry in rows:
+            marker = {"hypothesis": "?", "trial": ".", "verdict": "=", "note": "-"}[entry.kind]
+            typer.echo(
+                f"  {marker} [{entry.entry_id:>3}] {entry.recorded_at[:10]}  {entry.summary}"
+            )
+            if entry.metrics:
+                metrics = "  ".join(f"{k}={v:.4g}" for k, v in sorted(entry.metrics.items()))
+                typer.echo(f"        {metrics}")
+        return
+
+    typer.echo(book.report())
+    typer.secho(f"\nchain verified: {verified} entries intact", fg=typer.colors.GREEN)
+
+
 if __name__ == "__main__":
     app()
