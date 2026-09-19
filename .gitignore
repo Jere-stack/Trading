@@ -15,8 +15,12 @@ build/
 htmlcov/
 # Licensed market data must never be committed. EODHD and similar vendors
 # license data for your own use, not for redistribution -- and a GitHub repo is
-# redistribution. The whole data/ tree is ignored deliberately.
-data/
+# redistribution.
+#
+# The leading slash is load-bearing: a bare `data/` matches ANY directory named
+# data at any depth, which silently excluded src/tradelab/data/ and left the
+# EODHD provider untracked. Anchor it to the repository root.
+/data/
 *.parquet
 *.csv
 *.duckdb
