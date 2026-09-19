@@ -1,0 +1,52 @@
+# IB Gateway, headless, with automated login and daily restart.
+#
+# IB Gateway is a Java desktop application: it needs a display even when nobody
+# is looking at it. This image supplies Xvfb (a virtual framebuffer), IBC (which
+# types the login and handles the restart IBKR forces every day), and VNC for
+# the times you must actually see the window.
+#
+# SECURITY: the API port is bound to 127.0.0.1 deliberately. The TWS API has no
+# authentication of its own -- anything that can reach the port can trade the
+# account. It must never be published to 0.0.0.0. Reach it over Tailscale or an
+# SSH tunnel; see deploy/README.md.
+#
+# Env var names have changed between releases of this image. Check them against
+# the tag you pin before assuming this file is current.
+
+services:
+  ib-gateway:
+    image: ghcr.io/gnzsnz/ib-gateway:stable
+    restart: unless-stopped
+    environment:
+      TWS_USERID: ${TWS_USERID}
+      TWS_PASSWORD: ${TWS_PASSWORD}
+      # paper | live. The system's own guard cross-checks this against the
+      # port it connects to, so a mismatch here fails closed rather than
+      # trading the wrong account.
+      TRADING_MODE: ${TRADING_MODE:-paper}
+      # Blocks order submission at the gateway itself. Leave this on until the
+      # smoke test has passed and you have decided to trade: it makes the first
+      # connection incapable of doing damage, whatever the code does.
+      READ_ONLY_API: ${READ_ONLY_API:-yes}
+      VNC_SERVER_PASSWORD: ${VNC_SERVER_PASSWORD:-}
+      # Helsinki. The gateway logs and the daily restart both use it, and a
+      # wrong timezone here schedules the restart into the middle of the US
+      # session.
+      TIME_ZONE: ${TIME_ZONE:-Europe/Helsinki}
+      # 03:00 local: after the US close (23:00 Helsinki) and before Europe opens.
+      AUTO_RESTART_TIME: ${AUTO_RESTART_TIME:-03:00 AM}
+    ports:
+      # host:container. 4002 = paper, 4001 = live. 127.0.0.1 is not optional.
+      - "127.0.0.1:${API_PORT:-4002}:${API_PORT:-4002}"
+      - "127.0.0.1:5900:5900"    # VNC, localhost only; tunnel in when needed
+    volumes:
+      - ib-settings:/home/ibgateway/Jts
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 ${API_PORT:-4002} || exit 1"]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+      start_period: 180s   # login and 2FA take a while
+
+volumes:
+  ib-settings:

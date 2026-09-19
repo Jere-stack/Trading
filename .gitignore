@@ -53,3 +53,6 @@ secrets.yaml
 !state/paper/
 !state/paper/*.json
 !state/paper/*.sqlite
+
+# Broker credentials. Never committed.
+deploy/.env

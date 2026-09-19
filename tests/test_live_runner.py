@@ -632,3 +632,54 @@ class TestBatchDispatch:
         runner.start()
         runner.on_bars([])
         assert broker.submitted == []
+
+
+class TestIbkrPortGuard:
+    """The mode and the port are configured separately, by a person.
+
+    The failure is silent and expensive in exactly one direction: a run
+    believed to be paper that is actually connected to real money.
+    """
+
+    def test_paper_mode_refuses_a_live_gateway_port(self):
+        from tradelab.core.enums import RunMode
+        from tradelab.execution.broker import BrokerError
+        from tradelab.execution.ibkr_broker import IbkrBroker
+
+        with pytest.raises(BrokerError, match="LIVE port"):
+            IbkrBroker(port=4001, mode=RunMode.PAPER)
+
+    def test_paper_mode_refuses_a_live_tws_port(self):
+        from tradelab.core.enums import RunMode
+        from tradelab.execution.broker import BrokerError
+        from tradelab.execution.ibkr_broker import IbkrBroker
+
+        with pytest.raises(BrokerError, match="LIVE port"):
+            IbkrBroker(port=7496, mode=RunMode.PAPER)
+
+    def test_live_mode_refuses_a_paper_gateway_port(self):
+        from tradelab.core.enums import RunMode
+        from tradelab.execution.broker import BrokerError
+        from tradelab.execution.ibkr_broker import IbkrBroker
+
+        with pytest.raises(BrokerError, match="paper port"):
+            IbkrBroker(port=4002, mode=RunMode.LIVE)
+
+    def test_live_mode_refuses_an_unverifiable_port(self):
+        """A tunnel may remap the port, but then it cannot confirm the account."""
+        from tradelab.core.enums import RunMode
+        from tradelab.execution.broker import BrokerError
+        from tradelab.execution.ibkr_broker import IbkrBroker
+
+        with pytest.raises(BrokerError, match="neither 7496"):
+            IbkrBroker(port=14001, mode=RunMode.LIVE)
+
+        # ...and allows it on a deliberate opt-in.
+        IbkrBroker(port=14001, mode=RunMode.LIVE, allow_nonstandard_port=True)
+
+    def test_matching_pairs_are_accepted(self):
+        from tradelab.core.enums import RunMode
+        from tradelab.execution.ibkr_broker import IbkrBroker
+
+        for port, mode in ((4002, RunMode.PAPER), (7497, RunMode.PAPER), (4001, RunMode.LIVE)):
+            assert IbkrBroker(port=port, mode=mode).port == port

@@ -1,0 +1,20 @@
+[Unit]
+Description=Run the tradelab session after the US close
+
+[Timer]
+# US equities close 16:00 ET, which is 23:00 in Helsinki year-round (both zones
+# shift for DST within a couple of weeks of each other). 23:30 leaves room for
+# late prints to settle.
+#
+# This is the whole argument for a server: the decision point is 23:30 local,
+# every trading night, and a laptop that has to be awake for it will eventually
+# not be.
+OnCalendar=Mon..Fri 23:30 Europe/Helsinki
+# A missed run (reboot, maintenance) executes on the next boot rather than
+# being skipped silently. The session script is resumable and replays only
+# sessions it has not recorded, so a late run is correct, not a double-trade.
+Persistent=true
+RandomizedDelaySec=120
+
+[Install]
+WantedBy=timers.target

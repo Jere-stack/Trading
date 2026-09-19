@@ -7,7 +7,7 @@ hypotheses. A step back to ask what this project is actually for.
 
 ## Where we are
 
-**Built and working:** production-grade infrastructure, 251 tests, a
+**Built and working:** production-grade infrastructure, 256 tests, a
 survivorship-free US universe (16,737 symbols, 25.6M rows), a calibrated cost
 model, a research protocol that has already rejected seven hypotheses, and an
 append-only research ledger holding all 37 configurations ever evaluated.
@@ -119,8 +119,14 @@ signal needing 20 concurrent positions is not implementable at this size
 without fractional shares. See [10 Paper trading](10-paper-trading.md).
 
 **Remaining: the broker path.** Connect IB Gateway, run the same runner against
-the IBKR paper account, compare modelled costs against real fills. *This needs a
-computer that stays on — it cannot be done from this container or an iPad.*
+the IBKR paper account, compare modelled costs against real fills.
+
+This needs a machine that stays on, because the US close is 23:00 Helsinki and
+a laptop that has to be awake for it eventually will not be. A €4/month virtual
+server solves it; the full runbook, security posture and the read-only smoke
+test are in [deploy/README.md](../deploy/README.md). The server is the easy
+part — IBKR's 2FA under an unattended login is the thing to establish first,
+and it costs nothing to establish on the paper account.
 
 **Success looks like:** zero unexplained reconciliation breaks over 20 sessions,
 and a cost model within 20% of actual commissions.

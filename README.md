@@ -21,7 +21,7 @@ strategies.** That is the intended state — see
 uv venv --python 3.11
 uv pip install -e ".[dev]"
 
-.venv/bin/python -m pytest tests/ -q          # 251 tests
+.venv/bin/python -m pytest tests/ -q          # 256 tests
 .venv/bin/python scripts/cost_report.py       # why costs dominate at €10k
 .venv/bin/python scripts/hypothesis_screen.py # reject hypotheses before any data
 .venv/bin/tradelab config --mode PAPER        # validate configuration
@@ -111,7 +111,7 @@ src/tradelab/
 
 docs/            Broker selection, architecture, risk, protocol, hypotheses
 scripts/         Reproducible cost and hypothesis reports
-tests/           251 tests
+tests/           256 tests
 ```
 
 Dependencies point inward only.
@@ -131,6 +131,7 @@ Dependencies point inward only.
 | [09 Roadmap](docs/09-roadmap.md) | Strategy, end goal, ordered next steps, AI architecture |
 | [10 Paper trading](docs/10-paper-trading.md) | First run, four FX defects it surfaced, why gross exposure caps at 0.80x |
 | [11 Research ledger](docs/11-research-ledger.md) | Append-only trial record; why the DSR needs it and how it resists revision |
+| [Deployment](deploy/README.md) | Running unattended on a €4/mo server; IB Gateway, 2FA, security |
 | [05 Research protocol](docs/05-research-protocol.md) | The 10-stage validation gauntlet and its hard gates |
 | [06 Strategy hypotheses](docs/06-strategy-hypotheses.md) | 10 candidates, 6 rejected pre-data, 4 pending |
 

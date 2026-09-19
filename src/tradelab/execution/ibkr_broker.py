@@ -117,14 +117,32 @@ def _require_ib_async():
     return ib_async
 
 
+PAPER_PORTS = {7497: "TWS", 4002: "IB Gateway"}
+"""Ports that serve a paper account."""
+
+LIVE_PORTS = {7496: "TWS", 4001: "IB Gateway"}
+"""Ports that serve a real account with real money.
+
+Gateway, not TWS, is what a headless server runs -- so 4001/4002 are the ports
+an unattended deployment actually uses, and leaving them out of the guard would
+mean the check that exists to stop a paper run sending real orders never fires
+in the one place it matters most.
+"""
+
+
 @dataclass
 class IbkrBroker(Broker):
-    """IBKR adapter. Paper and live differ only by port (7497 vs 7496).
+    """IBKR adapter. Paper and live differ only by port.
 
-    That the only difference is a port number is the entire basis of the
-    paper-to-live parity claim: the message protocol, order types and market
-    data are identical, so integration validated on paper is integration
-    validated for live.
+    TWS serves paper on 7497 and live on 7496; IB Gateway serves paper on 4002
+    and live on 4001. That the only difference is a port number is the entire
+    basis of the paper-to-live parity claim: the message protocol, order types
+    and market data are identical, so integration validated on paper is
+    integration validated for live.
+
+    It is also why the port is checked against the mode before connecting. The
+    two are configured independently, in different files, by a person -- and
+    the failure is silent and expensive in exactly one direction.
     """
 
     host: str = "127.0.0.1"
@@ -134,6 +152,8 @@ class IbkrBroker(Broker):
     mode: RunMode = RunMode.PAPER
     clock: Clock = field(default_factory=LiveClock)
     readonly: bool = False
+    allow_nonstandard_port: bool = False
+    """Opt out of the LIVE-mode port check, for a deliberate tunnel or relay."""
     connect_timeout: int = 30
     max_reconnect_attempts: int = 5
     reconnect_backoff: float = 2.0
@@ -147,16 +167,34 @@ class IbkrBroker(Broker):
     errors: list[tuple[int, str]] = field(default_factory=list)
 
     def __post_init__(self) -> None:
-        if self.mode is RunMode.LIVE and self.port == 7497:
+        if self.mode is RunMode.PAPER and self.port in LIVE_PORTS:
             raise BrokerError(
-                "refusing to start: mode is LIVE but port 7497 is IBKR's paper port. "
-                "Live is 7496. One of the two is misconfigured.",
+                f"refusing to start: mode is PAPER but port {self.port} is "
+                f"{LIVE_PORTS[self.port]}'s LIVE port. This would send real orders "
+                "from a run believed to be paper.",
                 retryable=False,
             )
-        if self.mode is RunMode.PAPER and self.port == 7496:
+        if self.mode is RunMode.LIVE and self.port in PAPER_PORTS:
             raise BrokerError(
-                "refusing to start: mode is PAPER but port 7496 is IBKR's LIVE port. "
-                "This would send real orders from a paper run.",
+                f"refusing to start: mode is LIVE but port {self.port} is "
+                f"{PAPER_PORTS[self.port]}'s paper port. Live is "
+                f"{'7496 (TWS)' if self.port == 7497 else '4001 (IB Gateway)'}. "
+                "One of the two is misconfigured.",
+                retryable=False,
+            )
+        # An unrecognised port in LIVE mode is not necessarily wrong -- a relay
+        # or SSH tunnel may remap it -- but it is unverifiable, and an
+        # unverifiable port in live mode is worth a deliberate opt-in.
+        if (
+            self.mode is RunMode.LIVE
+            and self.port not in LIVE_PORTS
+            and not self.allow_nonstandard_port
+        ):
+            raise BrokerError(
+                f"refusing to start: mode is LIVE on port {self.port}, which is "
+                "neither 7496 (TWS) nor 4001 (IB Gateway), so the port cannot "
+                "confirm the account is the one intended. Set "
+                "allow_nonstandard_port=True if this is a deliberate tunnel.",
                 retryable=False,
             )
 
