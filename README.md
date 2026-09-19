@@ -21,7 +21,7 @@ strategies.** That is the intended state — see
 uv venv --python 3.11
 uv pip install -e ".[dev]"
 
-.venv/bin/python -m pytest tests/ -q          # 153 tests
+.venv/bin/python -m pytest tests/ -q          # 171 tests
 .venv/bin/python scripts/cost_report.py       # why costs dominate at €10k
 .venv/bin/python scripts/hypothesis_screen.py # reject hypotheses before any data
 .venv/bin/tradelab config --mode PAPER        # validate configuration
@@ -111,7 +111,7 @@ src/tradelab/
 
 docs/            Broker selection, architecture, risk, protocol, hypotheses
 scripts/         Reproducible cost and hypothesis reports
-tests/           153 tests
+tests/           171 tests
 ```
 
 Dependencies point inward only.
@@ -126,6 +126,7 @@ Dependencies point inward only.
 | [02 Architecture](docs/02-architecture.md) | Control flow, tech stack, paper→live switching, promotion gates |
 | [03 Risk management](docs/03-risk-management.md) | The 13 checks, kill-switch semantics, known gaps |
 | [04 Market data](docs/04-data.md) | Sources, quality audit, spread calibration, survivorship bias |
+| [07 EODHD setup](docs/07-eodhd-setup.md) | Step-by-step data acquisition; what needs a computer vs an iPad |
 | [05 Research protocol](docs/05-research-protocol.md) | The 10-stage validation gauntlet and its hard gates |
 | [06 Strategy hypotheses](docs/06-strategy-hypotheses.md) | 10 candidates, 6 rejected pre-data, 4 pending |
 
@@ -252,6 +253,19 @@ consuming a third to half of gross profit.**
 **Practical route: buy one month (€19.99), not a year.** A validation sprint
 needs the history, not a live feed — download the universe once, store it with
 provenance, cancel, and run the protocol against the local copy.
+
+The EODHD provider is implemented and verified against the live API:
+
+```bash
+export EODHD_API_TOKEN=...
+tradelab data eodhd --dataset us-research --exchange US --years 10 --max-symbols 500
+tradelab data audit --dataset us-research
+tradelab data calibrate --dataset us-research --notional 1000
+```
+
+Omitting `--symbols` builds the universe from **active and delisted** tickers,
+which is the entire reason to pay. Full setup, including which phases need a
+real computer, is in [docs/07-eodhd-setup.md](docs/07-eodhd-setup.md).
 
 ---
 

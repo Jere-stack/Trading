@@ -38,7 +38,21 @@ BAR_COLUMNS: tuple[str, ...] = (
     "volume",
 )
 
-OPTIONAL_BAR_COLUMNS: tuple[str, ...] = ("vwap", "trades", "dividend", "split_ratio")
+OPTIONAL_BAR_COLUMNS: tuple[str, ...] = (
+    "vwap",
+    "trades",
+    "dividend",
+    "split_ratio",
+    "adjustment_factor",
+    "unadjusted_close",
+)
+"""`adjustment_factor` and `unadjusted_close` are carried so that the cost of
+adjusting can be measured rather than assumed.
+
+Back-adjusted prices are correct for returns but understate historical price
+levels, so a per-share commission model computes too many shares for a given
+notional. Keeping the unadjusted close alongside makes that bounded error
+quantifiable -- see `tradelab.data.providers.eodhd.adjustment_distortion`."""
 
 BAR_DTYPES: dict[str, str] = {
     "symbol": "string",
@@ -51,6 +65,8 @@ BAR_DTYPES: dict[str, str] = {
     "trades": "float64",
     "dividend": "float64",
     "split_ratio": "float64",
+    "adjustment_factor": "float64",
+    "unadjusted_close": "float64",
 }
 
 

@@ -13,10 +13,12 @@ build/
 .ruff_cache/
 .coverage
 htmlcov/
-data/raw/
-data/processed/
-data/cache/
+# Licensed market data must never be committed. EODHD and similar vendors
+# license data for your own use, not for redistribution -- and a GitHub repo is
+# redistribution. The whole data/ tree is ignored deliberately.
+data/
 *.parquet
+*.csv
 *.duckdb
 *.sqlite
 *.sqlite3
@@ -28,3 +30,5 @@ research/output/
 .ipynb_checkpoints/
 .DS_Store
 secrets.yaml
+.eodhd_token
+*.token

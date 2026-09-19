@@ -191,6 +191,116 @@ def data_fetch(
         ib.disconnect()
 
 
+@data_app.command("eodhd")
+def data_eodhd(
+    dataset: str = typer.Option(..., help="Name to store the dataset under"),
+    exchange: str = typer.Option("US", help="US, HE (Helsinki), ST, XETRA, LSE, ..."),
+    symbols: str = typer.Option(
+        "", help="Comma-separated symbols. Omit to build a survivorship-free universe."
+    ),
+    years: int = typer.Option(10, help="Years of history"),
+    max_symbols: int = typer.Option(
+        50, help="Cap when auto-building a universe (each symbol costs 1 API call)"
+    ),
+    currency: str = typer.Option("USD"),
+    unadjusted: bool = typer.Option(
+        False, help="Store what actually traded instead of split/dividend-adjusted"
+    ),
+    root: Path = typer.Option(Path("data")),
+    overwrite: bool = typer.Option(False),
+) -> None:
+    """Download history from EODHD, including delisted tickers.
+
+    Needs EODHD_API_TOKEN in the environment. Never pass a token on the command
+    line -- it lands in your shell history.
+
+    With --symbols, fetches exactly those. Without it, builds a
+    survivorship-free universe from the exchange's active AND delisted tickers,
+    which is the reason to pay for this data at all.
+    """
+    from datetime import UTC, datetime, timedelta
+
+    from tradelab.data.providers.base import ProviderError
+    from tradelab.data.providers.eodhd import EodhdProvider, adjustment_distortion
+    from tradelab.data.quality import audit
+    from tradelab.data.schema import Adjustment, BarSetMetadata
+    from tradelab.data.store import BarStore
+
+    adjustment = Adjustment.NONE if unadjusted else Adjustment.SPLIT_AND_DIVIDEND
+    try:
+        provider = EodhdProvider(adjustment=adjustment, exchange=exchange)
+    except ProviderError as exc:
+        typer.secho(str(exc), fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=1) from exc
+
+    tickers = [s.strip().upper() for s in symbols.split(",") if s.strip()]
+    includes_delisted = False
+
+    if not tickers:
+        typer.echo(f"building a survivorship-free universe for {exchange}...")
+        try:
+            universe = provider.survivorship_free_universe(exchange, max_symbols=max_symbols)
+        except ProviderError as exc:
+            typer.secho(str(exc), fg=typer.colors.RED, err=True)
+            raise typer.Exit(code=1) from exc
+        tickers = universe["Code"].astype(str).str.upper().tolist()
+        dead = int(universe["delisted"].sum())
+        includes_delisted = dead > 0
+        typer.echo(f"  {len(tickers)} symbols ({len(tickers) - dead} active, {dead} delisted)")
+        if dead == 0:
+            typer.secho(
+                "  WARNING: no delisted tickers in this universe. Results will be "
+                "survivorship-biased.",
+                fg=typer.colors.YELLOW,
+            )
+
+    end = datetime.now(UTC)
+    start = end - timedelta(days=365 * years)
+    typer.echo(f"fetching {len(tickers)} symbol(s), {years}y, adjustment={adjustment.value}...")
+    try:
+        frame = provider.fetch(tickers, start, end, "1 day")
+    except ProviderError as exc:
+        typer.secho(str(exc), fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=1) from exc
+
+    metadata = BarSetMetadata(
+        provider=provider.name,
+        adjustment=adjustment,
+        bar_size="1 day",
+        currency=currency.upper(),
+        fetched_at=datetime.now(UTC),
+        symbols=tuple(sorted(frame["symbol"].unique())),
+        start=frame["timestamp"].min().to_pydatetime(),
+        end=frame["timestamp"].max().to_pydatetime(),
+        includes_delisted=includes_delisted,
+        notes=f"EODHD exchange={exchange}, {years}y",
+    )
+    path = BarStore(root).write(dataset, frame, metadata, overwrite=overwrite)
+    typer.secho(
+        f"stored {len(frame):,} bars for {len(metadata.symbols)} symbol(s) at {path}",
+        fg=typer.colors.GREEN,
+    )
+
+    if "adjustment_factor" in frame.columns and not unadjusted:
+        distortion = adjustment_distortion(frame)
+        worst = distortion.head(3)
+        typer.echo("\nadjustment distortion (adjusted price vs what actually traded):")
+        for symbol, row in worst.iterrows():
+            typer.echo(
+                f"  {symbol}: oldest adjusted price is {row['min_factor']:.1%} of traded, "
+                f"per-share commission error {row['commission_error_pct']:.0f}%"
+            )
+
+    report = audit(frame, adjustment=adjustment)
+    typer.echo("\n" + report.summary())
+    if report.critical:
+        typer.secho(
+            f"\n{len(report.critical)} CRITICAL issue(s) -- not safe to draw conclusions from.",
+            fg=typer.colors.RED,
+        )
+        raise typer.Exit(code=1)
+
+
 @data_app.command("audit")
 def data_audit(
     dataset: str = typer.Option(..., help="Dataset name under <root>/bars/"),
