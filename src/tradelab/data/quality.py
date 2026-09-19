@@ -206,8 +206,23 @@ def _check_history_length(
 # Ratios a corporate action realistically produces: splits below 1, reverse
 # splits above.
 _SPLIT_RATIOS = (
-    1 / 20, 1 / 10, 1 / 8, 1 / 7, 1 / 6, 1 / 5, 1 / 4, 1 / 3, 2 / 5, 1 / 2, 2 / 3,
-    3 / 2, 2.0, 3.0, 4.0, 5.0, 10.0,
+    1 / 20,
+    1 / 10,
+    1 / 8,
+    1 / 7,
+    1 / 6,
+    1 / 5,
+    1 / 4,
+    1 / 3,
+    2 / 5,
+    1 / 2,
+    2 / 3,
+    3 / 2,
+    2.0,
+    3.0,
+    4.0,
+    5.0,
+    10.0,
 )
 
 # Tolerance on the ratio match. Deliberately wide: a split lands on an ordinary

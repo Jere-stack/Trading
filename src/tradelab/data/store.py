@@ -116,6 +116,47 @@ class BarStore:
             )
         return frame.sort_values(["symbol", "timestamp"]).reset_index(drop=True)
 
+    # ------------------------------------------------- incremental writing
+
+    def open_dataset(self, dataset: str, *, overwrite: bool = False) -> Path:
+        """Prepare a dataset directory for streaming writes.
+
+        Used for universes too large to hold in memory, where losing an
+        hour-long download to a crash is a real cost. The dataset is only
+        considered complete once `finalize` writes its metadata -- a directory
+        of parquet files without `_metadata.json` is an interrupted download,
+        and `metadata()` will refuse to read it.
+        """
+        path = self.dataset_path(dataset)
+        if path.exists() and not overwrite:
+            raise FileExistsError(
+                f"dataset '{dataset}' already exists at {path}. Pass overwrite=True "
+                "deliberately: mixing series with different providers or adjustment "
+                "policies creates a phantom return at the splice point."
+            )
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    def write_symbol(self, dataset: str, frame: pd.DataFrame) -> Path:
+        """Append one symbol's bars to an open dataset."""
+        validate_bars(frame)
+        symbols = frame["symbol"].unique()
+        if len(symbols) != 1:
+            raise ValueError(f"expected exactly one symbol per call, got {len(symbols)}")
+        target = self.dataset_path(dataset) / f"{_safe(symbols[0])}.parquet"
+        frame.reset_index(drop=True).to_parquet(target, index=False, compression="zstd")
+        return target
+
+    def finalize(self, dataset: str, metadata: BarSetMetadata) -> Path:
+        """Mark a streamed dataset complete by writing its provenance."""
+        path = self.dataset_path(dataset)
+        if not path.exists():
+            raise FileNotFoundError(f"dataset '{dataset}' was never opened")
+        (path / "_metadata.json").write_text(
+            json.dumps(metadata.to_dict(), indent=2), encoding="utf-8"
+        )
+        return path
+
     def metadata(self, dataset: str) -> BarSetMetadata:
         path = self.dataset_path(dataset) / "_metadata.json"
         if not path.exists():

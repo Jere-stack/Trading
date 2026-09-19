@@ -34,10 +34,12 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from typing import Any
 
@@ -70,6 +72,32 @@ EXCHANGE_CODES = {
 }
 
 
+class RateLimiter:
+    """Shared token gate so concurrent workers stay under the published limit.
+
+    EODHD allows 1,000 requests/minute. Eight workers each pacing themselves
+    independently would issue eight times that, so the gate is shared: workers
+    queue for a slot, then make their request outside the lock. Concurrency
+    therefore hides latency without raising the request rate.
+    """
+
+    def __init__(self, per_minute: int) -> None:
+        if per_minute <= 0:
+            raise ValueError("per_minute must be positive")
+        self.min_interval = 60.0 / per_minute
+        self._lock = threading.Lock()
+        self._next_slot = 0.0
+
+    def acquire(self) -> None:
+        with self._lock:
+            now = time.monotonic()
+            slot = max(now, self._next_slot)
+            self._next_slot = slot + self.min_interval
+        delay = slot - time.monotonic()
+        if delay > 0:
+            time.sleep(delay)
+
+
 class EodhdProvider(BarProvider):
     """Daily bars, symbol lists and delisted tickers from EODHD."""
 
@@ -84,6 +112,8 @@ class EodhdProvider(BarProvider):
         timeout: int = 60,
         pacing_seconds: float = 0.1,
         max_retries: int = 3,
+        max_workers: int = 1,
+        requests_per_minute: int = 900,
     ) -> None:
         token = api_token or os.environ.get("EODHD_API_TOKEN")
         if not token:
@@ -100,9 +130,19 @@ class EodhdProvider(BarProvider):
         # stays comfortably under it without making a 500-symbol pull slow.
         self.pacing_seconds = pacing_seconds
         self.max_retries = max_retries
+        self.max_workers = max(1, max_workers)
+        # 900/min against a published ceiling of 1,000 leaves headroom for the
+        # symbol-list calls and for clock skew between client and server.
+        self.rate_limiter = RateLimiter(requests_per_minute)
         self.includes_delisted = False  # set True by fetch() when delisted symbols are included
         self.dropped_bars: dict[str, dict[str, int]] = {}
         """Per-ticker record of bars removed at ingestion. See `drop_report`."""
+        self.failures: dict[str, str] = {}
+        """Symbols that could not be fetched, and why."""
+        self.max_failure_rate = 0.0
+        """Tolerated share of failed symbols. 0.0 means any failure aborts;
+        large universes should raise it deliberately and report the result."""
+        self._failure_lock = threading.Lock()
 
     # ------------------------------------------------------------------ http
 
@@ -110,6 +150,7 @@ class EodhdProvider(BarProvider):
         params.setdefault("fmt", "json")
         params["api_token"] = self.api_token
         url = f"{BASE_URL}/{path}?{urllib.parse.urlencode(params)}"
+        self.rate_limiter.acquire()
 
         last_error: Exception | None = None
         for attempt in range(self.max_retries):
@@ -140,8 +181,7 @@ class EodhdProvider(BarProvider):
                 time.sleep(2**attempt)
 
         raise ProviderError(
-            f"EODHD request for {path} failed after {self.max_retries} attempts: "
-            f"{last_error}",
+            f"EODHD request for {path} failed after {self.max_retries} attempts: {last_error}",
             retryable=True,
         )
 
@@ -221,28 +261,71 @@ class EodhdProvider(BarProvider):
             raise ProviderError(f"start {start} is not before end {end}")
 
         frames: list[pd.DataFrame] = []
-        failures: list[str] = []
-        for symbol in symbols:
-            try:
-                frames.append(self._fetch_one(symbol, start, end))
-            except ProviderError as exc:
-                failures.append(f"{symbol}: {exc}")
-            time.sleep(self.pacing_seconds)
+        for frame in self.iter_fetch(symbols, start, end):
+            frames.append(frame)
 
         if not frames:
             raise ProviderError(
-                "no symbols returned data. Failures:\n  " + "\n  ".join(failures[:10])
+                "no symbols returned data. Failures:\n  "
+                + "\n  ".join(f"{k}: {v}" for k, v in list(self.failures.items())[:10])
             )
-        if failures:
-            # Partial failure is reported, not swallowed. Silently dropping
-            # names reintroduces survivorship bias at the fetch step -- the
-            # exact problem this provider is here to avoid.
-            raise ProviderError(
-                f"{len(failures)} of {len(symbols)} symbols failed. Refusing to return "
-                "a partial universe, because silently dropping names reintroduces "
-                "survivorship bias at the fetch step:\n  " + "\n  ".join(failures[:10])
-            )
+        self._check_failure_rate(len(symbols))
         return normalise_bars(pd.concat(frames, ignore_index=True), tz="UTC")
+
+    def iter_fetch(self, symbols: list[str], start: datetime, end: datetime):
+        """Yield per-symbol frames as they arrive, so callers can stream to disk.
+
+        A 22,000-symbol universe does not fit comfortably in memory and takes
+        long enough that losing it to a crash matters. Yielding lets the caller
+        persist each symbol as it lands.
+
+        Failures are collected in `self.failures` rather than raised per symbol,
+        because one dead ticker among thousands should not abort the run --
+        but the aggregate rate is checked against `max_failure_rate`, since a
+        high failure rate silently reintroduces the survivorship bias this
+        provider exists to remove.
+        """
+        self.failures.clear()
+        if self.max_workers == 1:
+            for symbol in symbols:
+                frame = self._fetch_guarded(symbol, start, end)
+                if frame is not None:
+                    yield frame
+            return
+
+        with ThreadPoolExecutor(max_workers=self.max_workers) as pool:
+            futures = {
+                pool.submit(self._fetch_guarded, symbol, start, end): symbol for symbol in symbols
+            }
+            for future in as_completed(futures):
+                frame = future.result()
+                if frame is not None:
+                    yield frame
+
+    def _fetch_guarded(self, symbol: str, start: datetime, end: datetime):
+        try:
+            return self._fetch_one(symbol, start, end)
+        except ProviderError as exc:
+            with self._failure_lock:
+                self.failures[symbol] = str(exc)
+            return None
+        except Exception as exc:
+            with self._failure_lock:
+                self.failures[symbol] = f"{type(exc).__name__}: {exc}"
+            return None
+
+    def _check_failure_rate(self, requested: int) -> None:
+        if not self.failures or requested == 0:
+            return
+        rate = len(self.failures) / requested
+        if rate > self.max_failure_rate:
+            sample = "\n  ".join(f"{k}: {v}" for k, v in list(self.failures.items())[:8])
+            raise ProviderError(
+                f"{len(self.failures)} of {requested} symbols failed ({rate:.1%}), above "
+                f"the {self.max_failure_rate:.0%} tolerance. Refusing to return this "
+                "universe: silently dropping names reintroduces survivorship bias at "
+                f"the fetch step.\n  {sample}"
+            )
 
     def _fetch_one(self, symbol: str, start: datetime, end: datetime) -> pd.DataFrame:
         ticker = symbol if "." in symbol else f"{symbol}.{self.exchange}"
@@ -296,7 +379,6 @@ class EodhdProvider(BarProvider):
                 "unadjusted_close",
             ]
         ]
-
 
     def _drop_non_trading_days(self, frame: pd.DataFrame, ticker: str) -> pd.DataFrame:
         """Remove bars where the instrument did not trade.

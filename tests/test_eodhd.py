@@ -286,3 +286,144 @@ class TestIntegrationWithPipeline:
         instrument = build_instruments(stats, currency="USD")["AAA"]
         assert instrument.spread_bps is not None
         assert instrument.adv is not None
+
+
+class TestRateLimiter:
+    def test_serialises_concurrent_workers(self):
+        """Pins the shared gate: N workers must not issue N times the rate.
+
+        Eight workers each pacing independently would exceed the published
+        limit eightfold and get the connection dropped.
+        """
+        import threading
+        import time
+
+        from tradelab.data.providers.eodhd import RateLimiter
+
+        limiter = RateLimiter(per_minute=600)  # one slot per 100ms
+        stamps: list[float] = []
+        lock = threading.Lock()
+
+        def worker():
+            limiter.acquire()
+            with lock:
+                stamps.append(time.monotonic())
+
+        threads = [threading.Thread(target=worker) for _ in range(6)]
+        began = time.monotonic()
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        elapsed = time.monotonic() - began
+        # Six slots at 100ms apart cannot complete in under ~0.5s.
+        assert elapsed >= 0.4, f"rate limit not enforced: {elapsed:.3f}s for 6 slots"
+        assert len(stamps) == 6
+
+    def test_rejects_invalid_rate(self):
+        from tradelab.data.providers.eodhd import RateLimiter
+
+        with pytest.raises(ValueError):
+            RateLimiter(per_minute=0)
+
+
+class TestFailureTolerance:
+    def test_strict_by_default(self):
+        """Default tolerance is zero: any failure aborts."""
+        provider = StubProvider({"eod/GOOD.US": EOD_ROWS})
+        assert provider.max_failure_rate == 0.0
+        with pytest.raises(ProviderError, match="survivorship bias at the fetch step"):
+            provider.fetch(["GOOD", "MISSING"], START, END)
+
+    def test_tolerated_failures_are_recorded(self):
+        """A dead ticker among thousands must not abort, but must be visible."""
+        provider = StubProvider({"eod/GOOD.US": EOD_ROWS})
+        provider.max_failure_rate = 0.6
+        frame = provider.fetch(["GOOD", "MISSING"], START, END)
+        assert len(frame) == len(EOD_ROWS)
+        assert "MISSING" in provider.failures
+
+    def test_failure_rate_above_tolerance_still_aborts(self):
+        """Pins the guard: a high failure rate IS survivorship bias."""
+        provider = StubProvider({"eod/GOOD.US": EOD_ROWS})
+        provider.max_failure_rate = 0.1
+        with pytest.raises(ProviderError, match="above the"):
+            provider.fetch(["GOOD", "A", "B", "C"], START, END)
+
+    def test_iter_fetch_streams_results(self):
+        provider = StubProvider({"eod/A.US": EOD_ROWS, "eod/B.US": EOD_ROWS, "eod/C.US": EOD_ROWS})
+        provider.max_failure_rate = 1.0
+        frames = list(provider.iter_fetch(["A", "B", "C"], START, END))
+        assert len(frames) == 3
+
+    def test_unexpected_exception_does_not_abort_the_run(self):
+        """One malformed symbol must not take down a 22,000-symbol download."""
+
+        class Exploding(StubProvider):
+            def _fetch_one(self, symbol, start, end):
+                if symbol == "BOOM":
+                    raise RuntimeError("unexpected")
+                return super()._fetch_one(symbol, start, end)
+
+        provider = Exploding({"eod/OK.US": EOD_ROWS})
+        provider.max_failure_rate = 1.0
+        frames = list(provider.iter_fetch(["OK", "BOOM"], START, END))
+        assert len(frames) == 1
+        assert "RuntimeError" in provider.failures["BOOM"]
+
+
+class TestIncrementalStore:
+    def test_streamed_dataset_roundtrips(self, tmp_path):
+        from datetime import UTC, datetime
+
+        from tradelab.data.schema import BarSetMetadata
+        from tradelab.data.store import BarStore
+
+        provider = StubProvider({"eod/A.US": EOD_ROWS, "eod/B.US": EOD_ROWS})
+        store = BarStore(tmp_path)
+        store.open_dataset("streamed")
+        for symbol in ("A", "B"):
+            store.write_symbol("streamed", provider.fetch([symbol], START, END))
+        store.finalize(
+            "streamed",
+            BarSetMetadata(
+                provider="eodhd",
+                adjustment=Adjustment.SPLIT_AND_DIVIDEND,
+                bar_size="1 day",
+                currency="USD",
+                fetched_at=datetime.now(UTC),
+                symbols=("A", "B"),
+                includes_delisted=True,
+            ),
+        )
+        back = store.read("streamed")
+        assert sorted(back["symbol"].unique()) == ["A", "B"]
+        assert store.metadata("streamed").includes_delisted
+
+    def test_interrupted_download_has_no_metadata(self, tmp_path):
+        """Pins: a dataset without provenance is an interrupted download.
+
+        `metadata()` must refuse it rather than let a partial universe be
+        mistaken for a complete one.
+        """
+        from tradelab.data.store import BarStore
+
+        provider = StubProvider({"eod/A.US": EOD_ROWS})
+        store = BarStore(tmp_path)
+        store.open_dataset("partial")
+        store.write_symbol("partial", provider.fetch(["A"], START, END))
+        # finalize() never called -- simulating a crash mid-download.
+        with pytest.raises(FileNotFoundError, match="Provenance is required"):
+            store.metadata("partial")
+
+    def test_write_symbol_rejects_multi_symbol_frames(self, tmp_path):
+        from tradelab.data.store import BarStore
+
+        provider = StubProvider({"eod/A.US": EOD_ROWS, "eod/B.US": EOD_ROWS})
+        provider.max_failure_rate = 1.0
+        store = BarStore(tmp_path)
+        store.open_dataset("multi")
+        combined = provider.fetch(["A", "B"], START, END)
+        with pytest.raises(ValueError, match="exactly one symbol"):
+            store.write_symbol("multi", combined)
