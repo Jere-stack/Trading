@@ -89,19 +89,41 @@ def main() -> None:
   by 1-4%/yr. Only a paid plan's delisted tickers fix it.""")
 
     # ----------------------------------------------------------- calibrate
-    rule("4. CALIBRATION -- measured cost parameters for real stocks")
+    rule("4. CALIBRATION -- cost parameters from real stocks")
     stats = calibrate(adjusted, lookback=252)
-    print(f"  {'symbol':<8} {'price':>9} {'ADV (USD)':>12} {'sigma/day':>10} {'spread':>9}")
-    print("  " + "-" * 52)
+    print(
+        f"  {'symbol':<8} {'price':>9} {'ADV (USD)':>12} {'sigma/day':>10} "
+        f"{'AR est':>8} {'used':>7}  source"
+    )
+    print("  " + "-" * 70)
     for symbol in sorted(stats, key=lambda s: -stats[s].adv_currency):
         s = stats[symbol]
         print(
             f"  {symbol:<8} {s.last_price:>9.2f} {s.adv_currency / 1e9:>10.2f}B "
-            f"{s.sigma_daily:>9.2%} {s.spread_bps:>8.1f}b"
+            f"{s.sigma_daily:>9.2%} {s.spread_bps_ar:>8.1f} {s.spread_bps:>6.1f}b  "
+            f"{s.spread_source}"
         )
-    print("""
-  These replace the modelled defaults. Before this, every cost figure in the
-  system was an assumption; these are measured from 252 days of real prices.""")
+
+    unreliable = [s for s in stats.values() if not s.spread_reliable]
+    print(f"""
+  ADV and volatility are measured directly and are trustworthy.
+
+  SPREAD IS NOT, for this universe: {len(unreliable)} of {len(stats)} estimates were
+  rejected as implausible and fell back to a liquidity prior. Two real failure
+  modes, both found here rather than in simulation:
+
+    - MSFT and AAPL estimated at 0.0 bps. For a mega-cap the spread (~1 bp) is
+      ~200x smaller than daily volatility (~200 bps), so it is buried. Zero
+      reads as "free to trade" -- the flattering direction.
+    - TSLA estimated at 107.7 bps against a real spread of 1-2 bps. High
+      volatility widens the high-low range, which the estimator attributes to
+      spread.
+
+  High-low estimators are therefore unreliable across the whole liquid
+  large-cap universe. They work in a middle band of liquidity, not at the top.
+  The fix is measuring spread from real IBKR quotes during the paper phase
+  (`sample_spread_from_quotes`); until then the ADV prior is the honest
+  substitute, and it is recorded as such rather than passed off as measured.""")
 
     # ------------------------------------------------------------- screen
     rule("5. UNIVERSE SCREEN -- what can a EUR 10k account afford?")
@@ -125,7 +147,10 @@ def main() -> None:
       run against genuine prices.
     - The auditor found real splits in unadjusted data with no corporate-action
       feed, and correctly flagged this universe as survivorship-biased.
-    - Cost parameters are now measured rather than assumed.
+    - ADV and volatility are now measured rather than assumed.
+    - Spread estimation was shown to be unreliable for liquid large caps,
+      and the guard caught it instead of feeding the cost model a number
+      wrong by two orders of magnitude.
 
   What the demo token CANNOT do is the one thing worth paying for: delisted
   tickers, and a universe wider than six names. Those need the EUR 19.99 plan.

@@ -256,6 +256,40 @@ For thinly-traded names the estimator **understates** the spread, collapsing
 toward zero at small true spreads. That is the dangerous direction: it makes an
 illiquid instrument look cheap to trade precisely where the real cost is worst.
 
+
+### And they fail at the top of the liquidity range too
+
+Running the calibration against **real prices** (12 years of AAPL, MSFT, AMZN,
+TSLA, MCD, VTI via `scripts/eodhd_demo.py`) exposed a second failure mode that
+simulation had missed entirely:
+
+| Symbol | Daily value | Daily vol | Abdi-Ranaldo estimate | Reality |
+|---|---|---|---|---|
+| MSFT | $12.9B | 2.05% | **0.0 bps** | ~1 bp |
+| AAPL | $12.2B | 1.58% | **0.0 bps** | ~1 bp |
+| TSLA | $24.1B | 2.92% | **107.7 bps** | ~1–2 bps |
+| MCD | $1.1B | 1.17% | 46.2 bps | ~2 bps |
+
+Two directions, both dangerous:
+
+- **Collapse to zero** on mega-caps. The spread (~1 bp) is roughly 200× smaller
+  than daily volatility (~200 bps), so it is buried in the high-low range.
+  Reporting 0.0 says "free to trade" — the flattering direction.
+- **Volatility mistaken for spread.** Tesla's high volatility widens the
+  high-low range, which the estimator attributes to spread.
+
+**All six liquid names were rejected once checked.** The estimators work in a
+middle band of liquidity and fail at both ends. The earlier simulation only
+covered 5–200 bps against 150 bps daily volatility, which never reached the
+mega-cap regime — a reminder that validation is only as good as the range it
+covers.
+
+`assess_spread_reliability` now checks every estimate against a liquidity prior
+(`spread_prior_from_adv`) and falls back when implausible, recording
+`spread_source="adv_prior"` so a substituted value is never mistaken for a
+measured one. **The real fix is measuring spread from IBKR quotes during the
+paper phase** — `sample_spread_from_quotes` exists for exactly that.
+
 **Rule: trust a calibrated spread only for actively traded names, and never let
 a low estimated spread alone qualify a thin instrument.** `screen_universe`
 rejects on ADV participation independently of the spread, so a thin name cannot
