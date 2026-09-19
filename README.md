@@ -128,6 +128,7 @@ Dependencies point inward only.
 | [04 Market data](docs/04-data.md) | Sources, quality audit, spread calibration, survivorship bias |
 | [07 EODHD setup](docs/07-eodhd-setup.md) | Step-by-step data acquisition; what needs a computer vs an iPad |
 | [08 What's testable](docs/08-testable-with-this-data.md) | Which hypotheses the data supports; merger arb built and rejected |
+| [09 Roadmap](docs/09-roadmap.md) | Strategy, end goal, ordered next steps, AI architecture |
 | [05 Research protocol](docs/05-research-protocol.md) | The 10-stage validation gauntlet and its hard gates |
 | [06 Strategy hypotheses](docs/06-strategy-hypotheses.md) | 10 candidates, 6 rejected pre-data, 4 pending |
 
