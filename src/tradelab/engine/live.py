@@ -219,7 +219,14 @@ class LiveRunner:
             )
 
     def _seed_account(self) -> None:
-        """Adopt broker cash and positions as the starting ledger."""
+        """Adopt broker cash and positions as the starting ledger.
+
+        Adopting is a *set*, not a deposit. The broker is authoritative, so its
+        balance replaces the local one. Adding instead doubles the balance
+        whenever the local ledger already reflects it -- which is latent
+        against a real broker starting from an empty ledger, and immediate
+        against a simulator sharing this portfolio.
+        """
         try:
             account = self.broker.account()
             positions = self.broker.positions()
@@ -227,7 +234,7 @@ class LiveRunner:
             raise StartupError(f"could not read broker account: {exc}") from exc
 
         for currency, amount in account.cash.items():
-            self.portfolio.deposit(amount, currency)
+            self.portfolio.set_cash(amount, currency)
         for position in positions:
             existing = self.portfolio.position(position.instrument)
             existing.quantity = position.quantity
@@ -242,19 +249,46 @@ class LiveRunner:
     # --------------------------------------------------------- market data
 
     def on_bar(self, bar: Bar) -> None:
-        """Feed a closed bar. Mirrors the backtest engine's ordering exactly."""
+        """Feed a single closed bar and dispatch immediately.
+
+        Correct for a live intraday feed, where bars arrive one at a time. For
+        a batch of bars sharing a timestamp -- a daily close across a universe
+        -- use `on_bars`, which publishes them all before dispatching.
+        """
+        self.on_bars([bar])
+
+    def on_bars(self, bars: list[Bar]) -> None:
+        """Feed all bars for one timestamp, then dispatch once.
+
+        Publishing before dispatching is not a detail. Dispatching after each
+        bar individually means the strategy runs while part of the universe
+        still carries yesterday's prices, so a cross-sectional rule sees a
+        mixture of dates. Observed in a real paper run: a rebalance triggered
+        on the alphabetically-first symbol was rejected for every other name
+        with "reference price is 259200s stale", because their bars for that
+        same session had not been published yet.
+
+        This mirrors `BacktestEngine`, which groups by timestamp for the same
+        reason -- and the divergence between the two paths is exactly the kind
+        of thing that makes a paper result fail to reproduce a backtest.
+        """
         if not self._running:
             raise RuntimeError("runner is not started")
-        key = bar.instrument.key
+        if not bars:
+            return
         from collections import deque
 
-        history = self._histories.setdefault(key, deque(maxlen=512))
-        history.append(bar)
-        self._last_prices[key] = bar.close
-        self._price_stamps[key] = bar.timestamp
-        self.portfolio.mark(bar.instrument, bar.close, bar.timestamp)
+        published: dict[str, Bar] = {}
+        for bar in bars:
+            key = bar.instrument.key
+            self._histories.setdefault(key, deque(maxlen=512)).append(bar)
+            self._last_prices[key] = bar.close
+            self._price_stamps[key] = bar.timestamp
+            self.portfolio.mark(bar.instrument, bar.close, bar.timestamp)
+            published[key] = bar
+
         self._roll_session()
-        self._dispatch({key: bar})
+        self._dispatch(published)
 
     def on_quote(self, quote: Quote) -> None:
         self._quotes[quote.instrument.key] = quote

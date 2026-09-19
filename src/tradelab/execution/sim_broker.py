@@ -90,6 +90,18 @@ class SimulatedBroker(Broker):
     config: SimulationConfig = field(default_factory=SimulationConfig)
     book: OrderBook = field(default_factory=OrderBook)
     account_id: str = "SIM"
+    owns_ledger: bool = True
+    """Whether this broker applies fills to `portfolio` itself.
+
+    True under `BacktestEngine`, which lets the broker own the ledger. **False
+    under `LiveRunner`**, which applies fills in its own `_on_fill` handler
+    after persisting them.
+
+    Getting this wrong double-counts every fill: the position doubles, cash
+    goes twice as negative, and the leverage guard trips on a book that was
+    never actually built. A real broker never touches your ledger, so the
+    simulator must be told when it is standing in for one.
+    """
     _connected: bool = False
     _bars: dict[str, Bar] = field(default_factory=dict)
     _quotes: dict[str, Quote] = field(default_factory=dict)
@@ -249,7 +261,8 @@ class SimulatedBroker(Broker):
             strategy_id=order.strategy_id,
         )
         order.apply_fill(fill)
-        self.portfolio.apply_fill(fill)
+        if self.owns_ledger:
+            self.portfolio.apply_fill(fill)
         self._emit_fill(fill)
         self._emit_order(order)
         return fill

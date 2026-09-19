@@ -98,6 +98,17 @@ class Portfolio:
         currency = (currency or self.base_currency).upper()
         self.cash[currency] = quantize_cash(self.cash.get(currency, ZERO) + to_decimal(amount))
 
+    def set_cash(self, amount: Decimal, currency: str | None = None) -> None:
+        """Set a currency balance outright, replacing whatever is there.
+
+        Distinct from `deposit`, which adds. Adopting a broker's reported
+        balance is a *set*: the broker is authoritative, so the local figure is
+        replaced rather than incremented. Using deposit for that silently
+        doubles the balance whenever the local ledger already holds it.
+        """
+        currency = (currency or self.base_currency).upper()
+        self.cash[currency] = quantize_cash(to_decimal(amount))
+
     def set_fx_rate(self, currency: str, rate_to_base: Decimal) -> None:
         """Set the rate converting one unit of `currency` into base currency."""
         rate = to_decimal(rate_to_base)

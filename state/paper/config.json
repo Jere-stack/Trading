@@ -1,0 +1,20 @@
+{
+  "universe": [
+    "AAPL",
+    "MSFT",
+    "JNJ",
+    "PG",
+    "XOM",
+    "JPM",
+    "UNH",
+    "HD",
+    "KO",
+    "VZ"
+  ],
+  "strategy": "monthly_equal_weight",
+  "initial_cash_eur": 10000.0,
+  "base_currency": "EUR",
+  "started": "2026-09-19T17:01:06.158488+00:00",
+  "last_session": "2026-09-18T00:00:00+00:00",
+  "purpose": "Plumbing validation, not alpha. Simulated fills against real daily prices. Does not validate IBKR API integration."
+}

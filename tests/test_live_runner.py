@@ -14,7 +14,7 @@ import pytest
 
 from tradelab.core.clock import SimulationClock
 from tradelab.core.enums import OrderStatus, RunMode, Side
-from tradelab.core.types import Bar, Fill, Instrument, Order, Position
+from tradelab.core.types import Bar, Fill, Instrument, Order, OrderRequest, Position
 from tradelab.engine.live import LiveRunner, StartupError
 from tradelab.execution.broker import Broker, BrokerAccount, BrokerError, OrderBook
 from tradelab.portfolio.state import StateStore
@@ -421,3 +421,214 @@ class TestRunnerBehaviour:
         runner.on_bar(bar(inst))
         kinds = {e["kind"] for e in runner.state_store.recent_events(50)}
         assert "startup" in kinds and "order" in kinds
+
+
+class TestLedgerOwnership:
+    """A simulated broker standing in for a real one must not touch the ledger.
+
+    `BacktestEngine` lets the broker own the ledger; `LiveRunner` owns it
+    itself. Sharing a portfolio without switching ownership applies every fill
+    twice -- the position doubles and the leverage guard trips on a book that
+    was never built. A real broker never writes to your ledger, so the
+    simulator has to be told when it is impersonating one.
+    """
+
+    def test_backtest_mode_broker_owns_the_ledger(self):
+        from tradelab.core.clock import SimulationClock
+        from tradelab.costs.commission import ZeroCommission
+        from tradelab.execution.sim_broker import SimulatedBroker
+        from tradelab.portfolio.portfolio import Portfolio
+
+        pf = Portfolio(base_currency="EUR")
+        pf.deposit(D("10000"))
+        inst = instrument()
+        broker = SimulatedBroker(
+            clock=SimulationClock(NOW), portfolio=pf, commission_model=ZeroCommission()
+        )
+        assert broker.owns_ledger
+        broker.connect()
+        broker.submit("o1", OrderRequest(inst, Side.BUY, D("10")))
+        broker.process_bar(bar(inst, ts=NOW + timedelta(days=1)))
+        assert pf.quantity_of(inst) == D("10")
+
+    def test_live_mode_broker_leaves_the_ledger_alone(self):
+        """Pins the fix: with owns_ledger=False the broker does not write."""
+        from tradelab.core.clock import SimulationClock
+        from tradelab.costs.commission import ZeroCommission
+        from tradelab.execution.sim_broker import SimulatedBroker
+        from tradelab.portfolio.portfolio import Portfolio
+
+        pf = Portfolio(base_currency="EUR")
+        pf.deposit(D("10000"))
+        inst = instrument()
+        broker = SimulatedBroker(
+            clock=SimulationClock(NOW),
+            portfolio=pf,
+            commission_model=ZeroCommission(),
+            owns_ledger=False,
+        )
+        broker.connect()
+        broker.submit("o1", OrderRequest(inst, Side.BUY, D("10")))
+        fills = broker.process_bar(bar(inst, ts=NOW + timedelta(days=1)))
+        assert fills, "the broker should still report the fill"
+        assert pf.quantity_of(inst) == 0, "but must not apply it to the ledger"
+
+    def test_runner_with_simulated_broker_applies_each_fill_once(self, tmp_path):
+        """End-to-end: the composition that paper trading actually uses."""
+        from tradelab.core.clock import SimulationClock
+        from tradelab.costs.commission import ZeroCommission
+        from tradelab.execution.sim_broker import SimulatedBroker
+        from tradelab.portfolio.state import StateStore
+
+        inst = instrument()
+        clock = SimulationClock(NOW)
+        runner = LiveRunner(
+            strategies=[BuyOnce(inst, qty=D("10"))],
+            broker=None,  # replaced below, once the portfolio exists
+            limits=permissive_limits(),
+            mode=RunMode.PAPER,
+            clock=clock,
+            state_store=StateStore(tmp_path / "s.sqlite"),
+        )
+        runner.broker = SimulatedBroker(
+            clock=clock,
+            portfolio=runner.portfolio,
+            commission_model=ZeroCommission(),
+            owns_ledger=False,
+        )
+        runner.portfolio.deposit(D("10000"))
+        runner.start()
+
+        runner.on_bar(bar(inst, ts=NOW))
+        clock.set(NOW + timedelta(days=1))
+        next_bar = bar(inst, ts=NOW + timedelta(days=1))
+        runner.broker.process_bar(next_bar)
+        runner.on_bar(next_bar)
+
+        assert runner.portfolio.quantity_of(inst) == D("10"), (
+            f"expected 10 shares, got {runner.portfolio.quantity_of(inst)} "
+            "-- a doubled position means the fill was applied twice"
+        )
+
+
+class TestAccountSeeding:
+    """Adopting a broker balance must replace the local one, not add to it."""
+
+    def test_seeding_sets_rather_than_adds(self, tmp_path):
+        """Pins the bug: a shared portfolio doubled the starting equity.
+
+        Found by running a real paper session -- EUR 10,000 of capital showed
+        as EUR 20,000, and every position was sized at twice its intended
+        weight.
+        """
+        from tradelab.core.clock import SimulationClock
+        from tradelab.execution.sim_broker import SimulatedBroker
+
+        inst = instrument()
+        clock = SimulationClock(NOW)
+        runner = LiveRunner(
+            strategies=[BuyOnce(inst)],
+            broker=None,
+            limits=permissive_limits(),
+            mode=RunMode.PAPER,
+            clock=clock,
+            state_store=StateStore(tmp_path / "s.sqlite"),
+        )
+        runner.broker = SimulatedBroker(clock=clock, portfolio=runner.portfolio, owns_ledger=False)
+        runner.portfolio.deposit(D("10000"))
+        runner.start()
+        assert runner.portfolio.equity == D("10000"), (
+            f"expected 10,000 but got {runner.portfolio.equity} -- seeding added "
+            "the broker balance instead of adopting it"
+        )
+
+    def test_set_cash_replaces_deposit_adds(self):
+        from tradelab.portfolio.portfolio import Portfolio
+
+        pf = Portfolio(base_currency="EUR")
+        pf.deposit(D("100"))
+        pf.deposit(D("100"))
+        assert pf.cash["EUR"] == D("200")
+        pf.set_cash(D("100"))
+        assert pf.cash["EUR"] == D("100")
+
+    def test_real_broker_balance_is_still_adopted(self, tmp_path):
+        """The normal path must keep working: an empty ledger takes the broker's."""
+        inst = instrument()
+        broker = FakeBroker(cash={"EUR": D("7500")})
+        runner = LiveRunner(
+            strategies=[BuyOnce(inst)],
+            broker=broker,
+            limits=permissive_limits(),
+            mode=RunMode.PAPER,
+            clock=SimulationClock(NOW),
+            state_store=StateStore(tmp_path / "s.sqlite"),
+        )
+        runner.start()
+        assert runner.portfolio.equity == D("7500")
+
+
+class TestBatchDispatch:
+    def test_whole_session_is_published_before_dispatch(self, tmp_path):
+        """Pins the bug: per-bar dispatch shows the strategy stale prices.
+
+        Found in a real paper run. A rebalance fired on the alphabetically
+        first symbol and every other order was rejected as stale, because
+        those symbols' bars for the same session had not been published yet.
+        """
+        seen: list[set[str]] = []
+        insts = [instrument("AAA"), instrument("BBB"), instrument("CCC")]
+
+        class RecordsWhatItSees(Strategy):
+            @property
+            def universe(self):
+                return insts
+
+            def on_bar(self, ctx, bars):
+                seen.append({i.symbol for i in insts if ctx.last_price(i) is not None})
+
+        broker = FakeBroker()
+        runner = LiveRunner(
+            strategies=[RecordsWhatItSees("watcher")],
+            broker=broker,
+            limits=permissive_limits(),
+            mode=RunMode.PAPER,
+            clock=SimulationClock(NOW),
+            state_store=StateStore(tmp_path / "s.sqlite"),
+        )
+        runner.start()
+        runner.on_bars([bar(i) for i in insts])
+
+        assert len(seen) == 1, "the strategy must be dispatched once per session"
+        assert seen[0] == {"AAA", "BBB", "CCC"}, (
+            f"strategy saw {seen[0]} -- the whole universe must be priced before dispatch"
+        )
+
+    def test_single_bar_still_works(self, tmp_path):
+        inst = instrument()
+        broker = FakeBroker()
+        runner = LiveRunner(
+            strategies=[BuyOnce(inst)],
+            broker=broker,
+            limits=permissive_limits(),
+            mode=RunMode.PAPER,
+            clock=SimulationClock(NOW),
+            state_store=StateStore(tmp_path / "s.sqlite"),
+        )
+        runner.start()
+        runner.on_bar(bar(inst))
+        assert len(broker.submitted) == 1
+
+    def test_empty_batch_is_a_noop(self, tmp_path):
+        broker = FakeBroker()
+        runner = LiveRunner(
+            strategies=[BuyOnce(instrument())],
+            broker=broker,
+            limits=permissive_limits(),
+            mode=RunMode.PAPER,
+            clock=SimulationClock(NOW),
+            state_store=StateStore(tmp_path / "s.sqlite"),
+        )
+        runner.start()
+        runner.on_bars([])
+        assert broker.submitted == []

@@ -26,7 +26,11 @@ htmlcov/
 *.duckdb
 *.sqlite
 *.sqlite3
-state/
+# Operational state is ignored EXCEPT the paper-trading track record, which is
+# committed deliberately: the container running it is wiped between sessions,
+# and version history makes the record auditable -- a result cannot be quietly
+# revised after the fact.
+state/*
 logs/
 *.log
 runs/
@@ -36,3 +40,16 @@ research/output/
 secrets.yaml
 .eodhd_token
 *.token
+
+# The paper-trading track record is committed deliberately: the container it
+# runs in is wiped between sessions, and version history makes the record
+# auditable -- a published result cannot be quietly revised afterwards.
+#
+# Two gitignore subtleties, both of which silently defeated earlier attempts:
+#   - `state/*` not `state/`, because git never descends into an excluded
+#     directory, so a negation beneath one is never reached.
+#   - These negations must come LAST, after `*.sqlite` above, since later
+#     rules win.
+!state/paper/
+!state/paper/*.json
+!state/paper/*.sqlite
