@@ -281,6 +281,22 @@ def data_eodhd(
         fg=typer.colors.GREEN,
     )
 
+    drops = provider.drop_report()
+    if not drops.empty:
+        typer.echo(f"\ndropped at ingestion ({len(drops)} of {len(tickers)} symbols affected):")
+        for ticker, row in drops.head(8).iterrows():
+            typer.echo(
+                f"  {ticker}: {int(row['non_trading_days'])} no-trade day(s), "
+                f"{int(row['corrupt_prices'])} corrupt ({row['dropped_pct']:.1f}% of bars)"
+            )
+        worst = drops["dropped_pct"].max()
+        if worst > 10:
+            typer.secho(
+                f"  WARNING: one symbol lost {worst:.0f}% of its bars to no-trade days. "
+                "That is an illiquidity signal, not a data problem.",
+                fg=typer.colors.YELLOW,
+            )
+
     if "adjustment_factor" in frame.columns and not unadjusted:
         distortion = adjustment_distortion(frame)
         worst = distortion.head(3)
