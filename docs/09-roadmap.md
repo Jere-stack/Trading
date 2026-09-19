@@ -7,14 +7,18 @@ hypotheses. A step back to ask what this project is actually for.
 
 ## Where we are
 
-**Built and working:** production-grade infrastructure, 209 tests, a
+**Built and working:** production-grade infrastructure, 251 tests, a
 survivorship-free US universe (16,737 symbols, 25.6M rows), a calibrated cost
-model, and a research protocol that has already rejected six hypotheses.
+model, a research protocol that has already rejected seven hypotheses, and an
+append-only research ledger holding all 37 configurations ever evaluated.
 
 **Validated strategies: zero.**
 
-**Never done: traded anything.** Not one order, not even on paper. The IBKR
-integration has never touched a real gateway.
+**Simulated trading: done.** 501 sessions through the full live path, zero risk
+rejections — after fixing the four multi-currency defects it exposed.
+
+**Never done: sent an order to a broker.** The IBKR integration has never
+touched a real gateway, and that cannot be tested from this container.
 
 That last line is the most important sentence in this document.
 
@@ -94,34 +98,64 @@ system is still running when the account is 10× larger.
 
 ## The steps, in order
 
-### Step 1 — Trade something. Anything. *(2–4 weeks)*
+### Step 1 — Trade something. Anything. *(2–4 weeks)* — **half done**
 
-**Do this before any more research.** We have never sent an order.
+**Done: the simulated path.** `scripts/paper_session.py` replays two years of
+real daily US bars through signal → FX funding → risk gate → order → fill →
+ledger → persisted state. It found four defects, every one of them invisible to
+a single-currency backtest:
 
-- Connect IB Gateway, run the live runner on the IBKR paper account
-- Trade a deliberately *dumb* strategy: monthly rebalance into 8 large caps
-- **Purpose is not profit.** It is to find the integration bugs that are
-  certainly there, and to compare modelled costs against real fills
+1. The FX rate was inverted (overvalues USD holdings by 32%)
+2. FX funding ran *after* the risk gate, so nothing ever converted or traded
+3. The currency budget double-counted a same-currency purchase, stalling gross
+   exposure at 0.51x
+4. The strategy divided EUR equity by a USD price — a currency error that looks
+   like the risk gate refusing to fill the book
+
+It now runs 501 sessions with **zero risk rejections**, and established a
+constraint that shapes strategy design: whole-share rounding across ten US
+mega-caps caps achievable gross exposure at **0.806x** on a €10,000 account. A
+signal needing 20 concurrent positions is not implementable at this size
+without fractional shares. See [10 Paper trading](10-paper-trading.md).
+
+**Remaining: the broker path.** Connect IB Gateway, run the same runner against
+the IBKR paper account, compare modelled costs against real fills. *This needs a
+computer that stays on — it cannot be done from this container or an iPad.*
 
 **Success looks like:** zero unexplained reconciliation breaks over 20 sessions,
 and a cost model within 20% of actual commissions.
 
 *Why first: every hour of alpha research is wasted if the execution path is
-broken. And it almost certainly is — we've never run it.*
+broken. It was — in four separate places.*
 
 ---
 
-### Step 2 — Build the research ledger *(~1 week)*
+### Step 2 — Build the research ledger *(~1 week)* — **done**
 
-A permanent, machine-readable record of **every hypothesis ever tested**.
+A permanent, machine-readable record of **every hypothesis ever tested**, at
+`research/ledger.jsonl`. Append-only, SHA-256 chained, seeded with the **37
+configurations** already evaluated.
 
-This is not bookkeeping. The Deflated Sharpe Ratio requires an honest count of
-*all* trials ever run. Across many sessions and different AI models, that count
-is currently held nowhere. **Without this ledger, our headline statistical test
-is a lie** — and it gets worse every session.
+This is not bookkeeping. Over three years of daily data the expected maximum
+annualised Sharpe of *worthless* strategies is 0.91 at 10 trials, 1.32 at 50
+and 1.60 at 200 — so a Sharpe of 1.3 is a respectable single-test result and is
+precisely what fifty worthless strategies produce by chance. That count was
+held nowhere.
+
+Editing or removing an entry breaks the chain and the CLI names the first
+failing entry; appending to a broken chain is refused. Superseding a trial
+needs a written reason and the superseded trial still counts.
+`deflate_from_ledger()` reads `n_trials` from the record so it stops being an
+argument anyone chooses.
+
+```bash
+.venv/bin/python -m tradelab.cli ledger
+```
+
+See [11 Research ledger](11-research-ledger.md).
 
 **Success looks like:** any future session, with any model, can answer "how many
-hypotheses have we tested?" and get the true number.
+hypotheses have we tested?" and get the true number. It can: 37, and rising.
 
 ---
 
