@@ -28,6 +28,11 @@ flattering. The five failure modes below account for the large majority of
 5. **Outliers.** Bad ticks -- a misplaced decimal, a crossed print -- create
    exactly the large moves that event-driven and reversal strategies trigger on.
 
+6. **Outright garbage.** At scale, vendor data contains exchange test tickers,
+   sentinel placeholder prices and physically impossible moves. A 16,737-symbol
+   US download contained all three; a six-symbol sample contained none. See
+   `_check_plausibility`.
+
 Every check reports rather than repairs. Automatic repair hides the problem, and
 the appropriate response differs by cause: a split needs adjustment, a bad tick
 needs removal, and a halt needs exclusion from the tradable universe.
@@ -107,6 +112,24 @@ class DataQualityError(RuntimeError):
     """Raised when data is too broken to produce a trustworthy result."""
 
 
+# Exchange test symbols. NASDAQ publishes these for system testing and they
+# carry deliberately nonsensical prices -- ZWZZT was observed moving
+# 15.28 -> 183,662 -> 10.10 -> 0.0048 in consecutive sessions. They appear in
+# vendor symbol lists as ordinary common stock.
+TEST_TICKERS = frozenset(
+    {"ZWZZT", "ZVZZT", "ZXZZT", "ZAZZT", "ZBZZT", "ZCZZT", "ZJZZT", "ZVV", "ZXYZ.A"}
+)
+
+# Placeholder values vendors emit when a real price is unavailable. Seen in
+# EODHD US delisted data as an exact close of 999999.9999.
+SENTINEL_PRICES = (999999.9999, 999999.99, 99999.99)
+
+# A single-session move beyond this is not a return. Real equities do move
+# +100% on a takeover or -90% on a fraud disclosure, so the bound is set far
+# above anything genuine: it catches corrupted data, not extreme markets.
+IMPLAUSIBLE_MOVE = 5.0
+
+
 def audit(
     frame: pd.DataFrame,
     *,
@@ -124,6 +147,7 @@ def audit(
     _check_survivorship(frame, expected_symbols, report)
     for symbol, group in frame.groupby("symbol", observed=True):
         group = group.sort_values("timestamp")
+        _check_plausibility(str(symbol), group, report)
         _check_history_length(symbol, group, min_history_rows, report)
         _check_splits(symbol, group, adjustment, report)
         _check_outliers(symbol, group, max_daily_move, report)
@@ -180,6 +204,78 @@ def _check_survivorship(
                     message=f"{len(missing)} expected symbol(s) absent from the data",
                     count=len(missing),
                     sample=tuple(sorted(missing)[:5]),
+                )
+            )
+
+
+def _check_plausibility(symbol: str, group: pd.DataFrame, report: QualityReport) -> None:
+    """Reject data that cannot represent a real security.
+
+    Added after a 16,737-symbol US download surfaced three kinds of garbage
+    that a handful of mega-caps never would:
+
+    * **Exchange test tickers.** NASDAQ's ZWZZT and siblings appear in vendor
+      symbol lists as ordinary common stock and carry deliberately nonsensical
+      prices.
+    * **Sentinel prices.** An exact close of 999,999.9999 is a placeholder for
+      "no price", not a price.
+    * **Impossible single-session moves.** 13,618 moves beyond +500% were
+      present across 1,486 symbols, typically on zero or near-zero volume.
+
+    These are CRITICAL rather than warnings because a single such bar destroys
+    any return series containing it: one +25,000,000x return makes a portfolio's
+    compounded return infinite, which is exactly what happened before this
+    check existed.
+    """
+    if symbol.upper() in TEST_TICKERS:
+        report.issues.append(
+            QualityIssue(
+                check="test_ticker",
+                severity=Severity.CRITICAL,
+                symbol=symbol,
+                message=(
+                    "is an exchange test symbol, not a tradable security. Vendor "
+                    "symbol lists classify these as ordinary common stock"
+                ),
+            )
+        )
+        return
+
+    close = group["close"].to_numpy(dtype=float)
+    sentinel = np.isin(np.round(close, 4), SENTINEL_PRICES)
+    if sentinel.any():
+        report.issues.append(
+            QualityIssue(
+                check="sentinel_price",
+                severity=Severity.CRITICAL,
+                symbol=symbol,
+                message=(
+                    f"{int(sentinel.sum())} bar(s) carry a placeholder price such as "
+                    "999999.9999, which means 'no price' rather than a price"
+                ),
+                count=int(sentinel.sum()),
+            )
+        )
+
+    if close.size >= 2:
+        returns = np.diff(close) / close[:-1]
+        impossible = np.abs(returns) > IMPLAUSIBLE_MOVE
+        if impossible.any():
+            stamps = group["timestamp"].to_numpy()[1:][impossible]
+            worst = float(np.abs(returns[impossible]).max())
+            report.issues.append(
+                QualityIssue(
+                    check="implausible_move",
+                    severity=Severity.CRITICAL,
+                    symbol=symbol,
+                    message=(
+                        f"{int(impossible.sum())} single-session move(s) beyond "
+                        f"{IMPLAUSIBLE_MOVE:.0%}, the largest {worst:,.0f}x. Real "
+                        "equities do not move this far; one such bar makes any "
+                        "compounded return containing it meaningless"
+                    ),
+                    count=int(impossible.sum()),
+                    sample=tuple(str(pd.Timestamp(t).date()) for t in stamps[:4]),
                 )
             )
 

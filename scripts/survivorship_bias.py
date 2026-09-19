@@ -45,6 +45,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from tradelab.data.quality import IMPLAUSIBLE_MOVE, SENTINEL_PRICES, TEST_TICKERS
 from tradelab.data.store import BarStore
 
 
@@ -63,6 +64,18 @@ def filter_tradable(
     dropped: dict[str, str] = {}
     for symbol, group in frame.groupby("symbol", observed=True):
         name = str(symbol)
+        if name.upper() in TEST_TICKERS:
+            dropped[name] = "exchange test ticker"
+            continue
+        close = group["close"].to_numpy(dtype=float)
+        if np.isin(np.round(close, 4), SENTINEL_PRICES).any():
+            dropped[name] = "carries placeholder prices (999999.9999)"
+            continue
+        if close.size >= 2:
+            moves = np.abs(np.diff(close) / close[:-1])
+            if moves.size and moves.max() > IMPLAUSIBLE_MOVE:
+                dropped[name] = f"implausible move of {moves.max():,.0f}x"
+                continue
         if len(group) < min_bars:
             dropped[name] = f"only {len(group)} bars"
             continue
