@@ -272,7 +272,14 @@ class TestSpreadEstimators:
         )
         ar = calibrate(frame, lookback=None, estimator=SpreadEstimator.ABDI_RANALDO)
         both = calibrate(frame, lookback=None, estimator=SpreadEstimator.MAX_OF_BOTH)
-        assert both["SIM"].spread_bps > ar["SIM"].spread_bps * 2
+
+        # The raw estimate still carries the bias...
+        assert both["SIM"].spread_bps_cs > ar["SIM"].spread_bps_ar * 2
+        # ...but the liquidity plausibility guard now catches it and falls back
+        # rather than letting a number wrong by 4x reach the cost model.
+        assert not both["SIM"].spread_reliable
+        assert both["SIM"].spread_source == "adv_prior"
+        assert ar["SIM"].spread_reliable
 
     def test_thin_trading_understates_spread(self):
         """Pins the estimator's dangerous failure mode.
@@ -407,3 +414,76 @@ class TestStore:
         assert isinstance(bars[0].close, Decimal)
         # Decimal(str(x)) must not inherit binary float representation error.
         assert "0000000" not in str(bars[0].close)
+
+
+class TestSpreadReliability:
+    """The high-low estimators fail in two directions on real data.
+
+    Both were found by running against genuine prices, not in simulation, and
+    both are dangerous: one reports a liquid stock as free to trade, the other
+    reports it as untradable.
+    """
+
+    def test_collapse_to_zero_is_caught(self):
+        """Pins the mega-cap case: Abdi-Ranaldo returned 0.0 bps for MSFT/AAPL.
+
+        For a mega-cap the spread (~1 bp) is ~200x smaller than daily
+        volatility (~200 bps), so it is buried. Reporting 0.0 says "free to
+        trade", which is the flattering direction.
+        """
+        from tradelab.data.calibration import assess_spread_reliability
+
+        reliable, note = assess_spread_reliability(0.0, adv_currency=12e9)
+        assert not reliable
+        assert "collapsed" in note
+
+    def test_volatility_mistaken_for_spread_is_caught(self):
+        """Pins the Tesla case: 107.7 bps estimated where the truth is 1-2 bps."""
+        from tradelab.data.calibration import assess_spread_reliability
+
+        reliable, note = assess_spread_reliability(107.7, adv_currency=24e9)
+        assert not reliable
+        assert "liquidity prior" in note
+
+    def test_plausible_estimate_is_accepted(self):
+        from tradelab.data.calibration import assess_spread_reliability
+
+        reliable, _ = assess_spread_reliability(12.0, adv_currency=3e7)
+        assert reliable
+
+    def test_prior_decreases_with_liquidity(self):
+        from tradelab.data.calibration import spread_prior_from_adv
+
+        priors = [spread_prior_from_adv(v) for v in (1e10, 1e9, 1e8, 1e7, 1e6, 1e4)]
+        assert priors == sorted(priors)
+        assert priors[0] <= 2.0  # mega-cap ~1 bp
+        assert priors[-1] >= 100.0  # micro-cap wide
+
+    def test_fallback_is_recorded_never_silent(self):
+        """A substituted value must be traceable, or the cost model lies quietly."""
+        import numpy as np
+        import pandas as pd
+
+        from tradelab.data.calibration import calibrate
+
+        # A mega-cap-like series: huge volume, tight range -> estimator collapses.
+        rng = np.random.default_rng(5)
+        n = 300
+        prices = 300 * np.cumprod(1 + rng.normal(0, 0.02, n))
+        frame = pd.DataFrame(
+            {
+                "timestamp": pd.date_range("2024-01-01", periods=n, tz="UTC"),
+                "symbol": "MEGA",
+                "open": prices,
+                "high": prices * 1.0001,
+                "low": prices * 0.9999,
+                "close": prices,
+                "volume": np.full(n, 5e7),
+            }
+        )
+        stats = calibrate(frame, lookback=None)["MEGA"]
+        assert not stats.spread_reliable
+        assert stats.spread_source == "adv_prior"
+        assert stats.spread_note
+        # The raw estimate is retained for inspection.
+        assert stats.spread_bps != stats.spread_bps_ar

@@ -203,14 +203,42 @@ def _check_history_length(
         )
 
 
+# Ratios a corporate action realistically produces: splits below 1, reverse
+# splits above.
+_SPLIT_RATIOS = (
+    1 / 20, 1 / 10, 1 / 8, 1 / 7, 1 / 6, 1 / 5, 1 / 4, 1 / 3, 2 / 5, 1 / 2, 2 / 3,
+    3 / 2, 2.0, 3.0, 4.0, 5.0, 10.0,
+)
+
+# Tolerance on the ratio match. Deliberately wide: a split lands on an ordinary
+# trading day, so the observed ratio is the split ratio times that day's return.
+# Apple split 4:1 on 2020-08-31 and moved +3.4%, giving an observed ratio of
+# 0.2585 rather than 0.2500 -- a 2% tolerance misses it entirely.
+_SPLIT_RATIO_TOLERANCE = 0.10
+
+
 def _check_splits(
     symbol: str, group: pd.DataFrame, adjustment: Adjustment, report: QualityReport
 ) -> None:
-    """Detect unadjusted splits by looking for near-integer price ratios.
+    """Detect unadjusted splits from near-exact price ratios.
 
-    A genuine -50% or -66.7% single-day move is possible but rare; a move that
-    lands within 2% of exactly 1/2, 1/3, 1/4 etc. and coincides with a
-    reciprocal jump in volume is nearly always a split.
+    A single-day move of -50%, -75% or -80% is extraordinary; one that also
+    lands near an exact split ratio is nearly always a corporate action rather
+    than a real return.
+
+    Two things are deliberately NOT required, both learned from real data:
+
+    * **A matching volume jump.** The intuition that a split multiplies share
+      volume does not hold bar-to-bar. Measured on real splits: Apple 4:1
+      showed a volume ratio of 1.20, Tesla 5:1 showed 1.18, and Tesla 3:1
+      showed **0.93** -- volume actually fell. Requiring a jump produced a
+      false negative on every real split tested. Volume is now reported as
+      corroboration, never used as a gate.
+    * **A tight ratio match.** See `_SPLIT_RATIO_TOLERANCE`.
+
+    The asymmetry justifies being liberal: a false positive costs a minute of
+    investigation, while a missed split silently destroys a backtest by
+    presenting a -75% corporate action as a tradable return.
     """
     close = group["close"].to_numpy()
     volume = group["volume"].to_numpy()
@@ -223,33 +251,22 @@ def _check_splits(
     for i, r in enumerate(ratio):
         if r <= 0 or not np.isfinite(r):
             continue
-        for numerator, denominator in (
-            (1, 2),
-            (1, 3),
-            (1, 4),
-            (1, 5),
-            (1, 10),
-            (2, 3),
-            (3, 2),
-            (2, 1),
-            (3, 1),
-            (4, 1),
-        ):
-            target = numerator / denominator
-            if target == 1.0:
-                continue
-            if abs(r - target) / target < 0.02:
-                vol_before = volume[i] if volume[i] > 0 else np.nan
-                vol_after = volume[i + 1]
-                # A split multiplies share count, so volume moves the other way.
-                volume_consistent = (
-                    np.isfinite(vol_before) and vol_after > 0 and (vol_after / vol_before) > 1.3
-                    if target < 1
-                    else True
-                )
-                if volume_consistent:
-                    suspects.append(f"{pd.Timestamp(timestamps[i]).date()} x{target:.3f}")
-                break
+        # Only consider moves too large to be plausible as real returns.
+        if 0.65 < r < 1.45:
+            continue
+        # Match the CLOSEST ratio, not the first within tolerance. Tesla's 5:1
+        # showed an observed ratio of 0.225, which is inside tolerance of both
+        # 1/5 and 1/4; taking the first match would mislabel it.
+        target = min(_SPLIT_RATIOS, key=lambda t: abs(r - t) / t)
+        if abs(r - target) / target > _SPLIT_RATIO_TOLERANCE:
+            continue
+        vol_before, vol_after = volume[i], volume[i + 1]
+        vol_note = ""
+        if vol_before > 0 and vol_after > 0:
+            vol_note = f" vol x{vol_after / vol_before:.2f}"
+        suspects.append(
+            f"{pd.Timestamp(timestamps[i]).date()} ratio {r:.3f}~{target:.3f}{vol_note}"
+        )
 
     if suspects:
         severity = (
@@ -263,8 +280,8 @@ def _check_splits(
                 severity=severity,
                 symbol=symbol,
                 message=(
-                    f"{len(suspects)} price jump(s) at near-exact split ratios with "
-                    f"consistent volume changes, and adjustment is {adjustment.value}. "
+                    f"{len(suspects)} price jump(s) at near-exact split ratios, and "
+                    f"adjustment is {adjustment.value}. "
                     "An unadjusted split reads as a huge one-day return and will be "
                     "traded enthusiastically by any reversal strategy"
                 ),

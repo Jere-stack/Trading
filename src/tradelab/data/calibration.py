@@ -101,6 +101,74 @@ class SpreadEstimator(StrEnum):
     bias floor and would reject the entire liquid universe as untradable."""
 
 
+# Rough spread-vs-liquidity relationship for listed equities, used only as a
+# plausibility band and fallback. Orders of magnitude, not precise values.
+_ADV_SPREAD_PRIOR = (
+    (5e9, 1.0),
+    (1e9, 2.0),
+    (2e8, 4.0),
+    (5e7, 8.0),
+    (1e7, 15.0),
+    (2e6, 35.0),
+    (5e5, 70.0),
+    (0.0, 150.0),
+)
+
+
+def spread_prior_from_adv(adv_currency: float) -> float:
+    """Expected spread in bps given daily traded value.
+
+    A liquidity-based sanity band for the high-low estimators, which have two
+    failure modes that real data exposes immediately (see
+    `assess_spread_reliability`). Not a substitute for a measured quote.
+    """
+    for threshold, bps in _ADV_SPREAD_PRIOR:
+        if adv_currency >= threshold:
+            return bps
+    return _ADV_SPREAD_PRIOR[-1][1]
+
+
+def assess_spread_reliability(
+    estimate_bps: float, adv_currency: float, *, tolerance: float = 4.0
+) -> tuple[bool, str]:
+    """Is a high-low spread estimate trustworthy for this instrument?
+
+    Measured on real data, the estimators fail in two directions and both are
+    dangerous:
+
+    * **Collapse to zero on very liquid names.** Abdi-Ranaldo returned 0.0 bps
+      for Microsoft and Apple over 252 real sessions. The estimator separates
+      spread from volatility using the high-low range, and for a mega-cap the
+      spread (~1 bp) is roughly 200x smaller than daily volatility (~200 bps),
+      so the signal is buried. Reporting 0.0 says "free to trade", which is the
+      flattering direction.
+    * **Wild overestimates on volatile names.** The same run reported 107.7 bps
+      for Tesla, whose real spread is 1-2 bps. High volatility widens the
+      high-low range, which the estimator attributes to spread.
+
+    Neither is visible without a liquidity prior to check against, which is why
+    this exists. When an estimate is judged unreliable, `calibrate` falls back
+    to the ADV-based prior and records that it did so, rather than silently
+    using a number that is wrong by two orders of magnitude.
+    """
+    if not np.isfinite(estimate_bps):
+        return False, "estimator returned no value"
+    prior = spread_prior_from_adv(adv_currency)
+    if estimate_bps <= 0.5:
+        return False, (
+            f"estimate {estimate_bps:.2f} bps collapsed to ~zero; for a name with "
+            f"{adv_currency / 1e6:.0f}M daily value the spread is buried under "
+            "volatility and cannot be recovered from high-low data"
+        )
+    if estimate_bps > prior * tolerance:
+        return False, (
+            f"estimate {estimate_bps:.1f} bps is more than {tolerance:.0f}x the "
+            f"liquidity prior of {prior:.1f} bps; high volatility is likely being "
+            "attributed to spread"
+        )
+    return True, "within the liquidity plausibility band"
+
+
 @dataclass(frozen=True)
 class InstrumentStats:
     """Measured parameters for one instrument."""
@@ -115,6 +183,9 @@ class InstrumentStats:
     spread_bps_cs: float
     spread_bps_ar: float
     spread_bps: float
+    spread_reliable: bool = True
+    spread_source: str = "estimated"
+    spread_note: str = ""
 
     def round_trip_cost_bps(self, notional: float, commission_bps: float) -> float:
         """Modelled round-trip cost at `notional`, excluding market impact."""
@@ -126,8 +197,7 @@ class InstrumentStats:
             f"{self.symbol:<8} px={self.last_price:>9.2f} "
             f"ADV={self.adv_currency / 1e6:>8.1f}M "
             f"sigma={self.sigma_daily:>6.2%} "
-            f"spread={self.spread_bps:>7.1f}bps (CS {self.spread_bps_cs:.1f} / "
-            f"AR {self.spread_bps_ar:.1f})"
+            f"spread={self.spread_bps:>7.1f}bps [{self.spread_source}]"
         )
 
 
@@ -239,6 +309,15 @@ def calibrate(
         # and the capacity check exists to bound the *typical* exit.
         adv_shares = float(np.median(volume))
         median_price = float(np.median(close))
+        adv_currency = adv_shares * median_price
+
+        reliable, note = assess_spread_reliability(chosen, adv_currency)
+        source = "estimated"
+        if not reliable:
+            # Fall back to the liquidity prior rather than use a number known
+            # to be wrong by orders of magnitude. Recorded, never silent.
+            chosen = spread_prior_from_adv(adv_currency)
+            source = "adv_prior"
 
         stats[str(symbol)] = InstrumentStats(
             symbol=str(symbol),
@@ -246,11 +325,14 @@ def calibrate(
             last_price=float(close[-1]),
             median_price=median_price,
             adv_shares=adv_shares,
-            adv_currency=adv_shares * median_price,
+            adv_currency=adv_currency,
             sigma_daily=sigma,
             spread_bps_cs=cs,
             spread_bps_ar=ar,
             spread_bps=chosen,
+            spread_reliable=reliable,
+            spread_source=source,
+            spread_note=note,
         )
     return stats
 
