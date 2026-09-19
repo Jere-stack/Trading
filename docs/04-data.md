@@ -147,6 +147,13 @@ That turns a €199/year commitment into a **€20 one-off**, which is 0.2% of t
 account and small enough that the decision does not need to be agonised over.
 Re-subscribe for a month when the universe needs refreshing.
 
+**This is licence-compliant, not a loophole.** EODHD's terms state that
+"Non-Professional Users are permitted to store, manipulate, and analyze the data
+for private, non-commercial purposes", and that the minimum commitment is one
+month with cancellation at any time. No clause requires deletion on
+cancellation. Redistribution remains prohibited, which is why the entire
+`data/` tree is gitignored.
+
 This is also the honest sequencing: the research protocol is designed to
 *reject* most candidates, so the expected outcome of the first sprint is a set
 of rejections. Paying €20 to find that out is good value; paying €199 up front

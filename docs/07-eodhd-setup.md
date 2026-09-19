@@ -144,9 +144,52 @@ outcome is that nothing survives. Paying €20 to establish that is good value.
 
 ## Step 6 — Cancel
 
-Once downloaded, cancel the subscription. The data stays valid for research
-indefinitely; only its freshness decays. Re-subscribe for a month when you want
-to extend the history or add exchanges.
+**Yes, one month is a permanent solution for research.** Confirmed in EODHD's
+Terms and Conditions:
+
+> "Non-Professional Users are permitted to **store, manipulate, and analyze the
+> data** for private, non-commercial purposes."
+
+> "Our subscription is monthly based and the User has no long-term obligations
+> here. The User can cancel subscription anytime, the minimum period of
+> commitment is one month."
+
+There is **no clause requiring deletion on cancellation.** You keep and analyse
+what you downloaded, indefinitely, for private non-commercial use. Two
+conditions attach:
+
+- **Non-professional only** — your own money. Managing others' funds would need
+  a different licence tier.
+- **No redistribution** — you may not sell, retransmit, redistribute or grant
+  access to the data. This is why the whole `data/` tree is gitignored.
+
+### What goes stale, and what does not
+
+| | After cancelling |
+|---|---|
+| Historical bars you downloaded | **Permanent.** A 10-year history ending today validates a hypothesis just as well next year |
+| Backtesting, walk-forward, DSR, PBO | **Permanent** — all run on local data |
+| Cost calibration (ADV, spread, volatility) | **Permanent** |
+| New bars after your download date | Stops. The snapshot freezes |
+| Delisted-ticker list | Freezes at download date |
+
+**Critically: you never need EODHD for trading.** The two data needs are
+separate and served by different providers:
+
+- **EODHD → research.** Historical, survivorship-free, one-off download.
+- **IBKR → trading.** Live prices for paper and live execution, via your
+  existing market data subscription (~€5–15/mo).
+
+So cancelling EODHD does not affect paper or live trading at all.
+
+### When to re-subscribe
+
+Another €20, roughly once a year, when you want to:
+
+- Extend the history forward and re-validate on the newly out-of-sample period
+  (this is genuinely valuable — it is a true out-of-sample test you did not fit)
+- Add another exchange (Helsinki, Stockholm, XETRA)
+- Refresh the delisted-ticker list
 
 **Before you cancel, make sure the data is somewhere you control.** Ask me to
 send you the Parquet files — I can push them to you directly, and you keep them
