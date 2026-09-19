@@ -28,7 +28,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from decimal import Decimal
 
-from tradelab.core.enums import AssetClass, RiskDecision
+from tradelab.core.enums import AssetClass, RiskDecision, Side
 from tradelab.core.money import ZERO, round_to_lot, safe_div
 from tradelab.core.types import Instrument, OrderRequest, Quote
 from tradelab.costs.commission import CommissionModel
@@ -529,6 +529,71 @@ class CostEfficiencyCheck(RiskCheck):
         return RiskVerdict.approve(self.name)
 
 
+class CashSufficiencyCheck(RiskCheck):
+    """Reject an order that would drive a currency balance negative.
+
+    A negative foreign balance is not a free position. At a real broker it is a
+    **margin loan** accruing interest -- the implicit leverage a cash-equity
+    mandate forbids. It is easy to miss because portfolio equity nets the
+    currencies: a EUR account holding -7,700 USD against +10,000 EUR shows
+    healthy equity while quietly running a loan.
+
+    The first paper run did exactly that for 19 fills before this check
+    existed. Funding is the treasury policy's job
+    (`tradelab.portfolio.treasury`); this check is the backstop that catches
+    the case where funding did not happen.
+    """
+
+    name = "cash_sufficiency"
+    tolerance = Decimal("1")
+    """Small debit balances are tolerated: commission settles after the trade
+    and rounding should not block an otherwise-funded order."""
+
+    def evaluate(self, request, ctx):
+        if request.side is not Side.BUY:
+            return RiskVerdict.approve(self.name)
+
+        inst = request.instrument
+        currency = inst.currency.upper()
+        ref = ctx.reference_price(inst)
+        if ref is None or ref <= 0:
+            return RiskVerdict.reject(self.name, "no reference price to size funding")
+
+        needed = request.quantity * ref * inst.multiplier
+        if ctx.commission_model is not None:
+            needed += ctx.commission_model.total(inst, request.side, request.quantity, ref)
+
+        available = ctx.portfolio.cash.get(currency, ZERO)
+        # Orders already working in this currency have committed cash too.
+        for key, notional in ctx.pending_exposure.items():
+            if key.endswith(f".{currency}"):
+                rate = ctx.portfolio.fx_rate(currency)
+                available -= safe_div(notional, rate)
+
+        if available - needed >= -self.tolerance:
+            return RiskVerdict.approve(self.name)
+
+        # Resize to what the balance affords rather than rejecting outright.
+        # An order that is merely too large should be trimmed, like any other
+        # sizing constraint; only a balance that affords nothing is a refusal.
+        per_share = ref * inst.multiplier
+        if per_share <= 0:
+            return RiskVerdict.reject(self.name, "non-positive price for sizing")
+        affordable = round_to_lot(max(ZERO, available - self.tolerance) / per_share, inst.lot_size)
+        if affordable <= 0:
+            return RiskVerdict.reject(
+                self.name,
+                f"needs {needed:.2f} {currency} but only {available:.2f} is available. "
+                "Buying anyway would borrow the difference, which is a margin loan "
+                "rather than a cash purchase -- convert currency first",
+            )
+        return RiskVerdict.resize(
+            self.name,
+            affordable,
+            f"trimmed to what the {currency} balance affords ({request.quantity} -> {affordable})",
+        )
+
+
 class PortfolioExposureCheck(RiskCheck):
     """Caps gross exposure, position count, and per-currency concentration.
 
@@ -601,22 +666,42 @@ class PortfolioExposureCheck(RiskCheck):
 
         ccy = inst.currency.upper()
         if ccy != pf.base_currency:
+            # Buying a USD stock with USD cash does NOT increase USD exposure:
+            # it moves value from cash to position, and `exposure_by_currency`
+            # counts both. Only the part of an order that must be funded from
+            # OUTSIDE the currency -- a conversion, or a margin loan -- adds
+            # foreign exposure.
+            #
+            # Charging the whole notional against the budget double-counted it.
+            # In a USD-only book that blocked almost every order: the EUR 9,500
+            # conversion that funded the account had already spent the budget,
+            # so gross exposure stalled at 0.51x against a 0.90 target.
+            #
+            # Capacity is therefore free cash in the currency (spendable with no
+            # exposure change) plus whatever headroom remains under the cap
+            # (spendable only by acquiring more of the currency). Once over the
+            # cap the second term is zero and existing cash can still be
+            # deployed, which is right: refusing to invest USD already held does
+            # not reduce the USD risk by one cent.
             exposures = pf.exposure_by_currency()
             pending_ccy = sum(
                 (value for key, value in ctx.pending_exposure.items() if key.endswith(f".{ccy}")),
                 ZERO,
             )
-            current_ccy = abs(exposures.get(ccy, ZERO)) + pending_ccy
-            ccy_headroom = equity * limits.max_currency_exposure - current_ccy
-            if ccy_headroom <= 0:
+            current_ccy = abs(exposures.get(ccy, ZERO))
+            ccy_headroom = max(ZERO, equity * limits.max_currency_exposure - current_ccy)
+            free_cash_base = max(ZERO, pf.cash.get(ccy, ZERO) * rate - pending_ccy)
+            ccy_capacity = free_cash_base + ccy_headroom
+            if ccy_capacity <= 0:
                 return RiskVerdict.reject(
                     self.name,
                     f"{ccy} exposure {current_ccy} at the "
-                    f"{limits.max_currency_exposure:.0%} cap; unhedged FX risk is "
+                    f"{limits.max_currency_exposure:.0%} cap with no {ccy} cash free; "
+                    "buying more would convert further, and unhedged FX risk is "
                     "uncompensated for a base-currency investor",
                 )
             allowed = min(
-                allowed, round_to_lot(safe_div(ccy_headroom, per_share_base), inst.lot_size)
+                allowed, round_to_lot(safe_div(ccy_capacity, per_share_base), inst.lot_size)
             )
 
         if allowed <= 0:
@@ -694,6 +779,7 @@ DEFAULT_CHECKS: tuple[type[RiskCheck], ...] = (
     CapacityCheck,
     PortfolioExposureCheck,
     StrategyBudgetCheck,
+    CashSufficiencyCheck,
     CostEfficiencyCheck,
 )
 
@@ -743,17 +829,19 @@ class RiskEngine:
             return RiskResult(RiskDecision.REJECT, None, verdicts, request.quantity)
 
         resized = request.with_quantity(lot)
-        # Re-run the cost gate on the resized order: a resize can push a
-        # previously economic order below the cost-efficiency floor, and
-        # approving a stub that pays full commission defeats the purpose.
-        recheck = CostEfficiencyCheck().evaluate(resized, ctx)
-        if recheck.decision is RiskDecision.REJECT:
-            verdicts.append(
-                RiskVerdict.reject(
-                    "cost_efficiency_post_resize",
-                    f"after resize to {lot} shares: {recheck.reason}",
+        # Re-run the gates that a resize can newly breach. Cost efficiency,
+        # because a shrunken order can fall below the floor and become a stub
+        # paying full commission. Cash sufficiency, because the smallest
+        # resize wins and may still exceed the balance.
+        for label, check in (
+            ("cost_efficiency_post_resize", CostEfficiencyCheck()),
+            ("cash_sufficiency_post_resize", CashSufficiencyCheck()),
+        ):
+            recheck = check.evaluate(resized, ctx)
+            if recheck.decision is RiskDecision.REJECT:
+                verdicts.append(
+                    RiskVerdict.reject(label, f"after resize to {lot} shares: {recheck.reason}")
                 )
-            )
-            return RiskResult(RiskDecision.REJECT, None, verdicts, request.quantity)
+                return RiskResult(RiskDecision.REJECT, None, verdicts, request.quantity)
 
         return RiskResult(RiskDecision.RESIZE, resized, verdicts, request.quantity)

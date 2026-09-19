@@ -44,6 +44,7 @@ from tradelab.data.store import BarStore
 from tradelab.engine.live import LiveRunner
 from tradelab.execution.sim_broker import SimulatedBroker
 from tradelab.portfolio.state import StateStore
+from tradelab.portfolio.treasury import BlockFxPolicy
 from tradelab.risk.limits import (
     OperationalLimits,
     PortfolioLimits,
@@ -56,8 +57,7 @@ from tradelab.strategy.examples.monthly_equal_weight import MonthlyEqualWeight
 # any expected return -- this basket is a test instrument.
 UNIVERSE = ["AAPL", "MSFT", "JNJ", "PG", "XOM", "JPM", "UNH", "HD", "KO", "VZ"]
 
-STATE_DIR = Path("state/paper")
-CONFIG_PATH = STATE_DIR / "config.json"
+DEFAULT_STATE_DIR = Path("state/paper")
 
 
 def build_instruments(spreads: dict[str, float] | None = None) -> list[Instrument]:
@@ -111,13 +111,27 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--initial-cash", type=float, default=10_000.0)
     parser.add_argument("--years", type=int, default=2, help="History to seed from")
-    parser.add_argument("--eur-usd", type=float, default=1.1481)
+    parser.add_argument(
+        "--eur-usd",
+        type=float,
+        default=1.1481,
+        help="USD per 1 EUR, as quoted by the ECB. Inverted internally, because "
+        "Portfolio.fx_rate wants base-currency-per-unit (EUR per USD).",
+    )
     parser.add_argument("--token", default=None, help="Defaults to EODHD_API_TOKEN")
+    parser.add_argument(
+        "--state-dir",
+        type=Path,
+        default=DEFAULT_STATE_DIR,
+        help="Where the track record lives. Point it elsewhere to try a change "
+        "without writing into the committed record.",
+    )
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
 
-    STATE_DIR.mkdir(parents=True, exist_ok=True)
-    state_path = STATE_DIR / "paper.sqlite"
+    state_dir: Path = args.state_dir
+    state_dir.mkdir(parents=True, exist_ok=True)
+    state_path = state_dir / "paper.sqlite"
     first_run = not state_path.exists()
 
     print("=" * 74)
@@ -154,6 +168,13 @@ def main() -> None:
     print(f"  {len({b.timestamp for b in bars})} session(s) to process")
 
     clock = SimulationClock(bars[0].timestamp)
+    # A EUR account trading only US stocks is ~100% USD by construction, so
+    # the 70% foreign-currency default cannot fund it. That is a real tradeoff,
+    # not a nuisance: Helsinki offers only 19 tradable names at this account
+    # size, so USD exposure is the price of a usable universe. Measured EUR/USD
+    # volatility is 6.70%/yr, uncompensated, and it is being accepted knowingly.
+    fx_policy = BlockFxPolicy(max_foreign_share=Decimal("0.95"))
+
     runner = LiveRunner(
         strategies=[MonthlyEqualWeight(instruments)],
         broker=None,
@@ -164,7 +185,11 @@ def main() -> None:
         state_store=store,
         commission_model=ibkr_default_router(),
         slippage_model=SpreadImpactSlippage(),
-        fx_rates={"USD": Decimal(str(args.eur_usd))},
+        # EUR per USD, the inverse of the quoted EUR/USD. Getting this
+        # backwards overvalues USD holdings by ~32% and silently breaks every
+        # exposure limit derived from equity.
+        fx_policy=fx_policy,
+        fx_rates={"USD": Decimal(1) / Decimal(str(args.eur_usd))},
     )
     runner.broker = SimulatedBroker(
         clock=clock,
@@ -228,7 +253,7 @@ def main() -> None:
 
     runner.stop(cancel_open_orders=True)
 
-    CONFIG_PATH.write_text(
+    (state_dir / "config.json").write_text(
         json.dumps(
             {
                 "universe": UNIVERSE,

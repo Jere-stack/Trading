@@ -166,9 +166,13 @@ class BacktestEngine:
                 now=clock.now(),
                 strategy_id=s.strategy_id,
                 equity=portfolio.equity,
+                base_currency=portfolio.base_currency,
                 _bars=histories,
                 _quotes=live_quotes,
                 _positions=portfolio.positions,
+                # The portfolio's own dict, by reference, so a rate updated
+                # mid-run is visible to the strategy without a refresh step.
+                _fx_rates=portfolio.fx_rates,
             )
             for s in self.strategies
         }

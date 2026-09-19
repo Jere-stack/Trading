@@ -31,7 +31,7 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 
 from tradelab.core.clock import Clock, LiveClock
-from tradelab.core.enums import RiskDecision, RunMode
+from tradelab.core.enums import RiskDecision, RunMode, Side
 from tradelab.core.ids import IdGenerator, new_run_id
 from tradelab.core.types import Bar, Fill, Instrument, Order, OrderRequest, Quote
 from tradelab.costs.commission import CommissionModel, ibkr_default_router
@@ -39,6 +39,7 @@ from tradelab.costs.slippage import SlippageModel, SpreadImpactSlippage
 from tradelab.execution.broker import Broker, BrokerError
 from tradelab.portfolio.portfolio import Portfolio
 from tradelab.portfolio.state import StateStore
+from tradelab.portfolio.treasury import BlockFxPolicy, FxPolicy
 from tradelab.risk.engine import RiskContext, RiskEngine, dedupe_key
 from tradelab.risk.killswitch import HaltLevel, RiskState
 from tradelab.risk.limits import RiskLimits
@@ -78,6 +79,10 @@ class LiveRunner:
     commission_model: CommissionModel = field(default_factory=ibkr_default_router)
     slippage_model: SlippageModel = field(default_factory=SpreadImpactSlippage)
     reconciliation: ReconciliationPolicy = field(default_factory=ReconciliationPolicy)
+    fx_policy: FxPolicy = field(default_factory=BlockFxPolicy)
+    """How foreign currency is funded. The default converts in infrequent
+    blocks; see `tradelab.portfolio.treasury` for why per-trade conversion is
+    38x more expensive at this account size."""
     fx_rates: dict[str, Decimal] = field(default_factory=dict)
     max_data_age_seconds: int = 300
 
@@ -138,9 +143,13 @@ class LiveRunner:
                 now=self.clock.now(),
                 strategy_id=strategy.strategy_id,
                 equity=self.portfolio.equity,
+                base_currency=self.portfolio.base_currency,
                 _bars=self._histories,
                 _quotes=self._quotes,
                 _positions=self.portfolio.positions,
+                # The portfolio's own dict, by reference, so a rate updated
+                # mid-run is visible to the strategy without a refresh step.
+                _fx_rates=self.portfolio.fx_rates,
             )
             strategy.on_start(self._contexts[strategy.strategy_id])
 
@@ -363,6 +372,13 @@ class LiveRunner:
             if leaves > 0 and price is not None:
                 context.reserve(resting.request.with_quantity(leaves), price)
 
+        # Fund foreign currency for the whole batch BEFORE risk evaluation.
+        # Funding after the gate is too late: CashSufficiencyCheck rejects
+        # the order first and nothing ever converts. Funding the batch
+        # together is also the point of a block policy -- one conversion
+        # covers the session rather than one per order.
+        self._fund_batch(intents, now)
+
         for intent in intents:
             result = self.risk.evaluate(intent, context)
             if not result.is_approved:
@@ -419,6 +435,65 @@ class LiveRunner:
                 f"{approved.strategy_id} {approved.side.value} {approved.quantity} "
                 f"{approved.instrument.symbol} ({approved.order_type.value})",
             )
+
+    def _fund_batch(self, intents: list[OrderRequest], now: datetime) -> None:
+        """Convert currency once per currency for a whole batch of intents.
+
+        Sums what the session's buy orders need in each foreign currency and
+        asks the treasury policy to cover it in a single conversion. Funding
+        per order would pay the USD 2.00 minimum repeatedly -- 38x more
+        expensive at this account size, measured on the first paper run.
+
+        Failure to fund is logged rather than raised: CashSufficiencyCheck is
+        the backstop that stops an unfunded order from borrowing.
+        """
+        base = self.portfolio.base_currency
+        needs: dict[str, Decimal] = {}
+        for intent in intents:
+            if intent.side is not Side.BUY:
+                continue
+            currency = intent.instrument.currency.upper()
+            if currency == base:
+                continue
+            price = self._last_prices.get(intent.instrument.key)
+            if price is None:
+                continue
+            required = intent.quantity * price * intent.instrument.multiplier
+            required += self.commission_model.total(
+                intent.instrument, intent.side, intent.quantity, price
+            )
+            needs[currency] = needs.get(currency, Decimal(0)) + required
+
+        for currency, required in needs.items():
+            if self.portfolio.cash.get(currency, Decimal(0)) >= required:
+                continue
+            try:
+                action = self.fx_policy.fund(self.portfolio, currency, required)
+            except Exception as exc:
+                self._log("fx_error", f"funding {currency} failed: {exc}", severity="CRITICAL")
+                continue
+            if action is None:
+                self._log(
+                    "fx_unfunded",
+                    f"cannot fund {required:.2f} {currency}; orders will be trimmed "
+                    "or rejected rather than borrowing",
+                    severity="WARNING",
+                )
+                continue
+            self._log("fx_convert", str(action))
+            if self.state_store is not None:
+                self.state_store.log_event(
+                    "fx_convert",
+                    str(action),
+                    "INFO",
+                    {
+                        "from": action.from_currency,
+                        "to": action.to_currency,
+                        "amount": str(action.amount_from),
+                        "cost": str(action.cost),
+                    },
+                    now,
+                )
 
     def _is_data_fresh(self, now: datetime) -> bool:
         if not self._price_stamps:

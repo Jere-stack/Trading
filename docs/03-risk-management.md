@@ -33,7 +33,7 @@ that has breached a limit becomes un-exitable — the gate would block the very
 orders that restore compliance. A control that prevents you selling is a
 liability.
 
-## The thirteen checks
+## The fourteen checks
 
 Ordered cheapest-first, so the common rejection path is fast.
 
@@ -52,6 +52,7 @@ Ordered cheapest-first, so the common rejection path is fast.
 | `PortfolioExposureCheck` | Leverage, over-diversification, unhedged FX concentration |
 | `StrategyBudgetCheck` | One strategy consuming another's allocated capacity |
 | `CostEfficiencyCheck` | Orders whose modelled cost exceeds the plausible edge |
+| `CashSufficiencyCheck` | A buy driving a currency balance negative, i.e. a margin loan |
 
 ### CostEfficiencyCheck — the distinctive one
 
@@ -70,6 +71,34 @@ screening.
 
 Applied only to risk-*increasing* orders. An exit must always be permitted,
 however expensive: refusing to sell is not a cost control.
+
+### CashSufficiencyCheck — the one the first paper run needed
+
+Portfolio equity nets the currencies, so a EUR account holding -7,700 USD
+against +10,000 EUR shows healthy equity while quietly running a loan at the
+broker. The first paper run did exactly that for 19 fills before this check
+existed.
+
+It **resizes** to what the balance affords rather than rejecting outright: an
+order that is merely too large should be trimmed like any other sizing
+constraint, and only a balance that affords nothing is a refusal. Funding is
+the treasury policy's job (`portfolio/treasury.py`); this is the backstop for
+when funding did not happen.
+
+### PortfolioExposureCheck — why a currency budget is not charged per trade
+
+`exposure_by_currency` counts cash **and** positions, so buying a USD stock
+with USD cash does not change USD exposure; it moves value from one line to the
+other. Charging the purchase against `max_currency_exposure` counts it twice,
+and in a USD-only book that blocks nearly every order — the conversion that
+funded the account has already spent the budget.
+
+Foreign exposure moves at **conversion**, and that is where it is bounded
+(`BlockFxPolicy.max_foreign_share`). The check therefore sizes against free
+cash in the currency plus whatever headroom remains under the cap. Over the cap
+the second term is zero and existing cash can still be deployed, which is
+right: refusing to invest USD already held does not reduce USD risk by one
+cent, it only converts an invested dollar into an idle one.
 
 ### CapacityCheck — bounding the exit, not the entry
 

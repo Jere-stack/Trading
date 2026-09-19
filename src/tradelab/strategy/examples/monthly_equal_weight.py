@@ -43,6 +43,7 @@ class MonthlyEqualWeight(Strategy):
         strategy_id: str = "monthly_equal_weight",
         drift_band: Decimal = Decimal("0.25"),
         target_gross: Decimal = Decimal("0.90"),
+        min_order_value: Decimal = Decimal("400"),
         warmup_bars: int = 2,
     ) -> None:
         super().__init__(strategy_id, warmup_bars=warmup_bars)
@@ -55,6 +56,12 @@ class MonthlyEqualWeight(Strategy):
         # Below 1.0 so commission and price drift between decision and fill do
         # not push the book through the gross exposure ceiling.
         self.target_gross = target_gross
+        # Base currency. The risk gate enforces its own minimum and remains the
+        # authority; this is the strategy declining to ask. Without it the
+        # monthly rebalance re-submits the same uneconomic one-share top-up
+        # every month forever -- 39 identical rejections in a two-year run --
+        # because a rejected order never changes the position that produced it.
+        self.min_order_value = min_order_value
         self._last_rebalance: date | None = None
 
     @property
@@ -77,13 +84,19 @@ class MonthlyEqualWeight(Strategy):
             return
 
         self._last_rebalance = today
-        target_value = ctx.equity * self.target_gross / Decimal(len(self._universe))
+        # Base currency. Prices are in the instrument's currency, so this has to
+        # be converted per name before it can be divided by a price -- see
+        # `ctx.budget_in`. Dividing EUR equity by a USD price sizes every US
+        # name short by the EUR/USD rate (13% at 1.148), which looks like a
+        # risk limit refusing to fill the book rather than an arithmetic error.
+        target_base = ctx.equity * self.target_gross / Decimal(len(self._universe))
 
         for inst in self._universe:
             price = priced[inst.key]
             if ctx.has_open_order(inst):
                 continue
             held = ctx.quantity(inst)
+            target_value = ctx.budget_in(inst, target_base)
             target_qty = round_to_lot(target_value / price, inst.lot_size)
             delta = target_qty - held
 
@@ -92,6 +105,12 @@ class MonthlyEqualWeight(Strategy):
                 if drift < self.drift_band:
                     continue
             if delta == ZERO:
+                continue
+            # Let the drift accumulate until the trade is worth its commission.
+            # Skipping here leaves the position underweight, which is the
+            # cheaper of the two errors: a EUR 276 order paying a EUR 1.25
+            # floor is 45 bps, more than the tracking error it removes.
+            if ctx.to_base(abs(delta) * price, inst.currency) < self.min_order_value:
                 continue
 
             reason = f"rebalance to 1/{len(self._universe)} ({today})"

@@ -105,8 +105,8 @@ class TestSizing:
         ctx = make_ctx({us_stock: D("200")})
         r = RiskEngine().evaluate(req(us_stock, 100), ctx)
         assert r.decision is RiskDecision.RESIZE
-        # 15% of EUR 10k = EUR 1500 -> /(200*0.92) = 8 shares
-        assert r.approved_request.quantity == D("8")
+        # 15% of EUR 19,200 equity = EUR 2,880 -> /(200 * 0.92) = 15 shares
+        assert r.approved_request.quantity == D("15")
 
     def test_capacity_limits_thin_stock(self, micro_cap, make_ctx):
         """Prevents: taking a position that cannot be exited in one day."""
@@ -142,18 +142,45 @@ class TestPortfolioLimits:
         assert r.decision is RiskDecision.RESIZE
         assert r.approved_request.quantity < D("400")
 
-    def test_currency_exposure_capped(self, us_stock, make_ctx):
-        """Prevents: unhedged USD risk swamping a small per-trade edge."""
+    def test_currency_cap_binds_when_funding_must_convert(self, us_stock, make_ctx, portfolio):
+        """Prevents: unhedged USD risk swamping a small per-trade edge.
+
+        The cap is tested on `PortfolioExposureCheck` alone rather than through
+        the engine, because an unfunded USD order is also (correctly) refused by
+        `CashSufficiencyCheck`, and a REJECT from that check would pass a naive
+        assertion here while telling us nothing about the currency budget.
+        """
+        from tradelab.risk.engine import PortfolioExposureCheck
+
+        portfolio.set_cash(D("0"), "USD")  # EUR-only book: any USD buy converts
         limits = RiskLimits(
             position=PositionLimits(max_position_weight=D("1.0")),
             portfolio=PortfolioLimits(max_currency_exposure=D("0.10")),
         )
         ctx = make_ctx({us_stock: D("200")}, limits=limits)
-        r = RiskEngine().evaluate(req(us_stock, 50), ctx)
-        assert r.decision in (RiskDecision.RESIZE, RiskDecision.REJECT)
-        if r.decision is RiskDecision.RESIZE:
-            notional = r.approved_request.quantity * D("200") * D("0.92")
-            assert notional <= D("1000") + D("200")
+        verdict = PortfolioExposureCheck().evaluate(req(us_stock, 50), ctx)
+        assert verdict.decision is RiskDecision.RESIZE
+        # 10% of EUR 10,000 equity = EUR 1,000 -> /(200 * 0.92) = 5 shares.
+        assert verdict.quantity == D("5")
+
+    def test_currency_cap_does_not_block_cash_already_held(self, us_stock, make_ctx, portfolio):
+        """Prevents: a funded account sitting in cash because the cap is breached.
+
+        The fixture holds EUR 9,200 of USD against EUR 19,200 equity -- 48%,
+        far past a 10% cap. Refusing to invest it would not reduce the USD risk
+        by one cent; it would only convert an invested dollar into an idle one.
+        Exposure moves at conversion, and that is where the treasury policy
+        bounds it.
+        """
+        from tradelab.risk.engine import PortfolioExposureCheck
+
+        limits = RiskLimits(
+            position=PositionLimits(max_position_weight=D("1.0")),
+            portfolio=PortfolioLimits(max_currency_exposure=D("0.10")),
+        )
+        ctx = make_ctx({us_stock: D("200")}, limits=limits)
+        verdict = PortfolioExposureCheck().evaluate(req(us_stock, 25), ctx)
+        assert verdict.decision is RiskDecision.APPROVE, verdict.reason
 
     def test_max_open_positions(self, make_ctx, portfolio):
         """Prevents: over-diversifying into positions too small to be economic."""
@@ -181,20 +208,24 @@ class TestPortfolioLimits:
             position=PositionLimits(max_position_weight=D("1.0")),
             strategy_budgets={"greedy": D("0.30")},
         )
+        # Budget is 30% of EUR 19,200 equity = EUR 5,760. A position of 1,200
+        # shares at 4.50 consumes EUR 5,400, leaving EUR 360 of headroom.
         portfolio.apply_fill(
-            Fill("f", "o", fi_stock, Side.BUY, D("600"), D("4.50"), NOW, strategy_id="greedy")
+            Fill("f", "o", fi_stock, Side.BUY, D("1200"), D("4.50"), NOW, strategy_id="greedy")
         )
         ctx = make_ctx({fi_stock: D("4.50")}, limits=limits)
         r = RiskEngine().evaluate(req(fi_stock, 400, strategy_id="greedy"), ctx)
         assert r.decision in (RiskDecision.RESIZE, RiskDecision.REJECT)
         if r.decision is RiskDecision.RESIZE:
-            assert r.approved_request.quantity <= D("70")
+            assert r.approved_request.quantity <= D("80")
 
 
 class TestLossLimits:
     def test_daily_loss_soft_halts(self, fi_stock, make_ctx, portfolio, state):
         """Prevents: a bad day compounding into a catastrophic one."""
-        state.day_start_equity = D("11000")
+        # Equity is 19,200; a start-of-day figure above 19,800 puts the day
+        # more than 3% down.
+        state.day_start_equity = D("21000")
         ctx = make_ctx({fi_stock: D("4.50")})
         r = RiskEngine().evaluate(req(fi_stock, 200), ctx)
         assert r.decision is RiskDecision.REJECT
@@ -205,7 +236,7 @@ class TestLossLimits:
         from tradelab.core.types import Fill
 
         portfolio.apply_fill(Fill("f", "o", fi_stock, Side.BUY, D("400"), D("4.50"), NOW))
-        state.day_start_equity = D("11000")
+        state.day_start_equity = D("21000")
         ctx = make_ctx({fi_stock: D("4.50")})
         r = RiskEngine().evaluate(req(fi_stock, 400, Side.SELL), ctx)
         assert r.is_approved, r.reason
@@ -214,7 +245,8 @@ class TestLossLimits:
         self, fi_stock, make_ctx, portfolio, state
     ):
         """Prevents: an automated system quietly resuming after a 15% drawdown."""
-        state.peak_equity = D("13000")
+        # Equity is 19,200; a peak above 22,588 puts drawdown past 15%.
+        state.peak_equity = D("24000")
         ctx = make_ctx({fi_stock: D("4.50")})
         r = RiskEngine().evaluate(req(fi_stock, 200), ctx)
         assert r.decision is RiskDecision.REJECT

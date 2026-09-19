@@ -124,11 +124,12 @@ Dependencies point inward only.
 |---|---|
 | [01 Broker selection](docs/01-broker-selection.md) | Why IBKR Ireland; full cost analysis; why Alpaca's EU entity doesn't apply |
 | [02 Architecture](docs/02-architecture.md) | Control flow, tech stack, paper→live switching, promotion gates |
-| [03 Risk management](docs/03-risk-management.md) | The 13 checks, kill-switch semantics, known gaps |
+| [03 Risk management](docs/03-risk-management.md) | The 14 checks, kill-switch semantics, known gaps |
 | [04 Market data](docs/04-data.md) | Sources, quality audit, spread calibration, survivorship bias |
 | [07 EODHD setup](docs/07-eodhd-setup.md) | Step-by-step data acquisition; what needs a computer vs an iPad |
 | [08 What's testable](docs/08-testable-with-this-data.md) | Which hypotheses the data supports; merger arb built and rejected |
 | [09 Roadmap](docs/09-roadmap.md) | Strategy, end goal, ordered next steps, AI architecture |
+| [10 Paper trading](docs/10-paper-trading.md) | First run, four FX defects it surfaced, why gross exposure caps at 0.80x |
 | [05 Research protocol](docs/05-research-protocol.md) | The 10-stage validation gauntlet and its hard gates |
 | [06 Strategy hypotheses](docs/06-strategy-hypotheses.md) | 10 candidates, 6 rejected pre-data, 4 pending |
 

@@ -34,9 +34,12 @@ class StrategyContext:
     now: datetime
     strategy_id: str
     equity: Decimal
+    """Total account value, in `base_currency`."""
+    base_currency: str = "EUR"
     _bars: dict[str, deque[Bar]] = field(default_factory=dict)
     _quotes: dict[str, Quote] = field(default_factory=dict)
     _positions: dict[str, Position] = field(default_factory=dict)
+    _fx_rates: dict[str, Decimal] = field(default_factory=dict)
     _pending: list[OrderRequest] = field(default_factory=list)
     _open_order_keys: set[str] = field(default_factory=set)
 
@@ -63,6 +66,46 @@ class StrategyContext:
 
     def quote(self, instrument: Instrument) -> Quote | None:
         return self._quotes.get(instrument.key)
+
+    # ----------------------------------------------------------------- currency
+
+    def fx_rate(self, currency: str) -> Decimal:
+        """Units of `base_currency` per unit of `currency`.
+
+        Raises on an unknown currency rather than assuming parity. A silent 1.0
+        would misprice a whole book by the size of the FX move and is exactly
+        the kind of error that looks like a bad strategy instead of a bug.
+        """
+        code = currency.upper()
+        if code == self.base_currency:
+            return Decimal("1")
+        try:
+            return self._fx_rates[code]
+        except KeyError:
+            raise KeyError(
+                f"no FX rate for {code}->{self.base_currency}; cannot size a "
+                f"{code} position from {self.base_currency} equity"
+            ) from None
+
+    def to_base(self, amount: Decimal, currency: str) -> Decimal:
+        """Convert an instrument-currency amount into base currency."""
+        return amount * self.fx_rate(currency)
+
+    def in_currency(self, base_amount: Decimal, currency: str) -> Decimal:
+        """Convert a base-currency budget into the instrument's currency.
+
+        Position sizing needs this and it is easy to skip. `equity` is in base
+        currency and `last_price` is in the instrument's; dividing one by the
+        other is a currency error, not an approximation. A EUR account sizing
+        USD names at EUR/USD 1.148 lands 13% short of target on every name,
+        which shows up as a book that will not reach its gross target and looks
+        like a risk-limit problem rather than an arithmetic one.
+        """
+        return base_amount / self.fx_rate(currency)
+
+    def budget_in(self, instrument: Instrument, base_amount: Decimal) -> Decimal:
+        """`base_amount` expressed in `instrument`'s currency."""
+        return self.in_currency(base_amount, instrument.currency)
 
     def closes(self, instrument: Instrument, lookback: int | None = None) -> list[Decimal]:
         return [b.close for b in self.history(instrument, lookback)]

@@ -116,6 +116,59 @@ class Portfolio:
             raise ValueError(f"fx rate for {currency} must be positive, got {rate}")
         self.fx_rates[currency.upper()] = rate
 
+    def convert(
+        self,
+        from_currency: str,
+        to_currency: str,
+        amount: Decimal,
+        rate: Decimal,
+        *,
+        cost: Decimal = ZERO,
+        cost_currency: str | None = None,
+    ) -> Decimal:
+        """Move cash between currencies, paying an explicit conversion cost.
+
+        Without this, buying a USD stock from a EUR account simply drives the
+        USD balance negative. At a real broker that is a **margin loan**, not a
+        free position -- it accrues interest and is exactly the implicit
+        leverage a cash-equity mandate forbids. The paper run accumulated
+        -7,716 USD this way before the gap was noticed.
+
+        Returns the amount credited in `to_currency`.
+        """
+        from_currency, to_currency = from_currency.upper(), to_currency.upper()
+        amount = to_decimal(amount)
+        rate = to_decimal(rate)
+        if amount <= 0:
+            raise ValueError(f"conversion amount must be positive, got {amount}")
+        if rate <= 0:
+            raise ValueError(f"conversion rate must be positive, got {rate}")
+
+        available = self.cash.get(from_currency, ZERO)
+        if available < amount:
+            raise InsufficientFundsError(
+                f"cannot convert {amount} {from_currency}: only {available} available. "
+                "Converting more than you hold is borrowing."
+            )
+
+        credited = quantize_cash(amount * rate)
+        self.cash[from_currency] = quantize_cash(available - amount)
+        self.cash[to_currency] = quantize_cash(self.cash.get(to_currency, ZERO) + credited)
+
+        if cost > 0:
+            charge_ccy = (cost_currency or to_currency).upper()
+            self.cash[charge_ccy] = quantize_cash(self.cash.get(charge_ccy, ZERO) - cost)
+        return credited
+
+    def negative_balances(self, tolerance: Decimal = ZERO) -> dict[str, Decimal]:
+        """Currencies held at a debit balance, i.e. borrowed.
+
+        Any entry here is a margin loan at a real broker. Under a cash-equity
+        mandate the dict should always be empty, so it is worth checking rather
+        than assuming.
+        """
+        return {ccy: amount for ccy, amount in self.cash.items() if amount < -tolerance}
+
     def fx_rate(self, currency: str) -> Decimal:
         currency = currency.upper()
         if currency == self.base_currency:

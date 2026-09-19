@@ -58,8 +58,19 @@ def micro_cap() -> Instrument:
 
 @pytest.fixture
 def portfolio() -> Portfolio:
+    """A EUR account holding a standing USD balance.
+
+    Total equity is EUR 19,200: 10,000 EUR plus 10,000 USD at 0.92. Funding
+    both currencies mirrors what the block-conversion treasury policy actually
+    maintains -- an account holding only EUR would have every USD order
+    funded by overdraft, which CashSufficiencyCheck correctly refuses.
+    """
     pf = Portfolio(base_currency="EUR")
     pf.deposit(D("10000"))
+    # A standing USD balance, which is what the block-conversion treasury
+    # policy actually maintains. Funding only EUR would leave every USD order
+    # relying on an overdraft, which CashSufficiencyCheck correctly refuses.
+    pf.deposit(D("10000"), "USD")
     pf.set_fx_rate("USD", D("0.92"))
     return pf
 
