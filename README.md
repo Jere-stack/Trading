@@ -127,6 +127,7 @@ Dependencies point inward only.
 | [03 Risk management](docs/03-risk-management.md) | The 13 checks, kill-switch semantics, known gaps |
 | [04 Market data](docs/04-data.md) | Sources, quality audit, spread calibration, survivorship bias |
 | [07 EODHD setup](docs/07-eodhd-setup.md) | Step-by-step data acquisition; what needs a computer vs an iPad |
+| [08 What's testable](docs/08-testable-with-this-data.md) | Which hypotheses the data supports; merger arb built and rejected |
 | [05 Research protocol](docs/05-research-protocol.md) | The 10-stage validation gauntlet and its hard gates |
 | [06 Strategy hypotheses](docs/06-strategy-hypotheses.md) | 10 candidates, 6 rejected pre-data, 4 pending |
 

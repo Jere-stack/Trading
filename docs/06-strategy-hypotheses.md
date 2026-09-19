@@ -2,6 +2,15 @@
 
 **Status: no validated strategy. Zero strategies are approved for capital.**
 
+> **Update after acquiring data (2026-09-19).** H4, H5, H7 and H9 — the four
+> survivors below — turned out **not testable** with the EODHD EOD plan: it
+> carries no earnings dates, index membership or fund holdings. A new candidate
+> derivable from price alone, **N1 cash merger arbitrage, was built and
+> rejected**: −2.45% expected value per resolved event across 438 events, with
+> a 23% deal-break rate at −20.31% overwhelming the +2.76% earned on deals that
+> closed. It looked profitable at every threshold until resolved and unresolved
+> events were separated. See [`docs/08-testable-with-this-data.md`](08-testable-with-this-data.md).
+
 This is the correct state of the project. The infrastructure is built and
 tested; the strategy research has completed Stage 0–1 (pre-registration and
 feasibility screening) and cannot proceed further without market data that has
@@ -332,6 +341,47 @@ If nothing survives, the rational alternatives are:
 
 Deploying a strategy because effort was spent on it is the one option with
 negative expected value.
+
+---
+
+## 8. Post-data addendum: N1 cash merger arbitrage — REJECTED
+
+Derived from the constraints rather than from a list, and the strongest
+candidate testable with price data alone. Tested on 520 detections over 15
+years and rejected.
+
+**Mechanism.** Deal risk premium — compensation for bearing the risk a deal
+breaks. A risk premium rather than an anomaly, which is why it should persist.
+Cash deals are long-only, holding periods run to months, and capacity is
+naturally small. It is also uniquely testable here: broken deals exist only in
+a survivorship-free universe.
+
+**Detection.** A cash acquisition leaves a signature nothing else produces — a
+jump on heavy volume, then realised volatility collapsing to ~0.2%/day as the
+price pins to the agreed cash price. Detection is strictly causal and never
+uses delisting as an input, since that is the outcome being predicted.
+
+**Result.**
+
+| Bucket | n | Mean |
+|---|---|---|
+| Deal closed | 339 | +2.76% |
+| Deal broke | 99 | **−20.31%** |
+| **All resolved** | **438** | **−2.45%** |
+
+**Why it fails.** Entry ten sessions after announcement leaves only the
+residual spread, which is thinnest when the deal is safest. Price cannot
+distinguish deal risk — financing, regulatory exposure, buyer type — so the
+book is a blind mix. And the cleanest-looking pins are the deals the market is
+most confident in, hence the lowest-paying: **selecting on the signature
+selects against the premium.**
+
+**The methodological lesson.** The headline was positive at every threshold
+tested (+1.43% to +6.59%) while the honest subset was negative at every one
+(−1.39% to −6.34%). The profit came entirely from events that never resolved —
+earnings jumps followed by quiet periods, which the detector cannot tell from a
+deal pin. Parameter robustness provided false reassurance; only splitting
+resolved from unresolved events exposed it.
 
 ---
 
