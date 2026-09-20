@@ -302,6 +302,104 @@ class EodhdProvider(BarProvider):
                 if frame is not None:
                     yield frame
 
+    # ------------------------------------------------------------- dividends
+
+    def dividends(self, symbol: str, start: datetime, end: datetime) -> pd.DataFrame:
+        """Dividend history for one symbol, with declaration dates.
+
+        `declarationDate` is the field that makes this endpoint worth using.
+        The ex-date is when the price adjusts; the **declaration date** is when
+        the market learned. An event study anchored on the ex-date of a cut
+        measures a drift that began days earlier, and reports the part that had
+        already happened as though it were tradable.
+
+        Where the declaration date is missing -- it is, for a minority of older
+        records -- the row is kept with `declaration_date` null rather than
+        silently back-filled from the ex-date. A caller studying announcements
+        must drop those rows; one studying the payment stream need not, and the
+        two should not be forced into the same compromise here.
+        """
+        ticker = symbol if "." in symbol else f"{symbol}.{self.exchange}"
+        rows = self._get(
+            f"div/{ticker}",
+            **{"from": start.strftime("%Y-%m-%d"), "to": end.strftime("%Y-%m-%d")},
+        )
+        if not rows:
+            return pd.DataFrame(
+                columns=[
+                    "symbol",
+                    "ex_date",
+                    "declaration_date",
+                    "record_date",
+                    "payment_date",
+                    "period",
+                    "value",
+                    "unadjusted_value",
+                    "currency",
+                ]
+            )
+
+        frame = pd.DataFrame(rows)
+        out = pd.DataFrame(
+            {
+                "symbol": symbol,
+                "ex_date": pd.to_datetime(frame.get("date"), errors="coerce", utc=True),
+                "declaration_date": pd.to_datetime(
+                    frame.get("declarationDate"), errors="coerce", utc=True
+                ),
+                "record_date": pd.to_datetime(frame.get("recordDate"), errors="coerce", utc=True),
+                "payment_date": pd.to_datetime(frame.get("paymentDate"), errors="coerce", utc=True),
+                "period": frame.get("period", pd.Series(dtype="object")).astype("string"),
+                # `value` is adjusted for later splits; `unadjustedValue` is what
+                # was actually declared. A cut is a change in the per-share rate,
+                # so the comparison must be made on a consistently adjusted
+                # series -- a 2:1 split halves the unadjusted dividend and is not
+                # a cut. `value` is therefore the one to compare.
+                "value": pd.to_numeric(frame.get("value"), errors="coerce"),
+                "unadjusted_value": pd.to_numeric(frame.get("unadjustedValue"), errors="coerce"),
+                "currency": frame.get("currency", pd.Series(dtype="object")).astype("string"),
+            }
+        )
+        out = out.dropna(subset=["ex_date", "value"])
+        return out.sort_values("ex_date").reset_index(drop=True)
+
+    def iter_dividends(self, symbols: list[str], start: datetime, end: datetime):
+        """Yield per-symbol dividend frames as they arrive.
+
+        Same contract as `iter_fetch`: failures are collected rather than
+        raised, because one dead ticker among thousands should not abort a
+        17,000-symbol pull, and the aggregate rate is what matters.
+        """
+        self.failures.clear()
+        if self.max_workers == 1:
+            for symbol in symbols:
+                frame = self._dividends_guarded(symbol, start, end)
+                if frame is not None:
+                    yield frame
+            return
+
+        with ThreadPoolExecutor(max_workers=self.max_workers) as pool:
+            futures = {
+                pool.submit(self._dividends_guarded, symbol, start, end): symbol
+                for symbol in symbols
+            }
+            for future in as_completed(futures):
+                frame = future.result()
+                if frame is not None:
+                    yield frame
+
+    def _dividends_guarded(self, symbol: str, start: datetime, end: datetime):
+        try:
+            return self.dividends(symbol, start, end)
+        except ProviderError as exc:
+            with self._failure_lock:
+                self.failures[symbol] = str(exc)
+            return None
+        except Exception as exc:
+            with self._failure_lock:
+                self.failures[symbol] = f"{type(exc).__name__}: {exc}"
+            return None
+
     def _fetch_guarded(self, symbol: str, start: datetime, end: datetime):
         try:
             return self._fetch_one(symbol, start, end)
