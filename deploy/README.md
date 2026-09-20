@@ -11,16 +11,18 @@ A €4/month virtual server removes the problem entirely.
 
 ## What to buy
 
-| Provider | Spec | ~Price/mo | Notes |
+| Provider | Spec | Price/mo | Notes |
 |---|---|---|---|
-| **Hetzner CX22** ← recommended | 2 vCPU, 4 GB, 40 GB NVMe | **€3.79 + €0.50 IPv4** | German company, EU jurisdiction, **Helsinki datacenter**. Best price/performance in Europe by a clear margin |
-| UpCloud | 2 vCPU, 4 GB, 80 GB | ~€20 | Finnish company, Helsinki. Same country as you, ~4× the price |
+| **Hetzner CX23** ← recommended | 2 vCPU, 4 GB, 40 GB NVMe | **€5.99 ex VAT**<br>€7.52 inc 25.5% FI VAT | German company, EU jurisdiction, **Helsinki datacenter**. IPv4 and 20 TB traffic included |
+| UpCloud | 2 vCPU, 4 GB, 80 GB | ~€20 | Finnish company, Helsinki. Same country as you, ~3× the price |
 | DigitalOcean | 2 vCPU, 4 GB | ~$24 | Better docs, worse value |
 | Oracle Cloud Free | 4 ARM cores, 24 GB | €0 | Genuinely free, and genuinely reclaimable without notice. Not for something that holds broker credentials and must run tonight |
 
-*Prices drift — check before ordering.*
+*Prices drift — check before ordering. Hetzner renamed the CX line (CX22 →
+CX23) and raised it; the figure above is from the live price list, and the
+VAT-inclusive column is what a Finnish private customer actually pays.*
 
-**Take Hetzner CX22, Helsinki region, Ubuntu LTS.** 4 GB is the number that
+**Take Hetzner CX23, Helsinki region, Ubuntu LTS.** 4 GB is the number that
 matters: IB Gateway is a Java application that wants 1–2 GB to itself, and a
 1 GB instance will OOM in the middle of a session rather than at a convenient
 moment.
@@ -31,23 +33,27 @@ different business.
 
 ## What it costs against the edges we are looking for
 
-€4.29/mo is **€51/yr, or 0.51% of a €10,000 account**. Set against the
+€7.52/mo inc VAT is **€90/yr, or 0.90% of a €10,000 account**. Set against the
 register's data-cost table (`docs/06-strategy-hypotheses.md` §6), which already
 carries €199/yr for EODHD:
 
-| | Net edge/yr | Break-even, data only | Break-even, **+hosting** |
-|---|---|---|---|
-| H4 Post-earnings drift | 3.36% | €5,923 | **€7,455** |
-| H5 Index deletion | 3.30% | €6,030 | **€7,590** |
-| H7 Spin-off selling | 5.55% | €3,586 | **€4,513** |
-| H9 Fund fire-sales | 4.25% | €4,682 | **€5,894** |
+| | Net edge/yr | Break-even, data only | Break-even, **+hosting** | Headroom at €10k |
+|---|---|---|---|---|
+| H4 Post-earnings drift | 3.36% | €5,923 | **€8,607** | €1,393 |
+| H5 Index deletion | 3.30% | €6,030 | **€8,764** | €1,236 |
+| H7 Spin-off selling | 5.55% | €3,586 | **€5,211** | €4,789 |
+| H9 Fund fire-sales | 4.25% | €4,682 | **€6,805** | €3,195 |
 
-All four stay under €10,000, so the server is affordable — but note what the
-table is really saying. **Fixed costs are now €250/yr, 2.50% of the account,
-paid whether or not anything trades.** At €50,000 the same €250 is 0.50%. The
-economics of this project improve faster with account size than with any
-plausible improvement in the strategies, and that is worth remembering when
-deciding where effort goes.
+All four stay under €10,000, so the server is affordable — but look at the
+headroom column rather than the verdict. **H4 and H5 break even at roughly
+€8,700, against an account of €10,000.** Those two are viable by about 13%,
+on effect sizes the register itself calls deliberately generous. They are not
+comfortably affordable; they are barely affordable.
+
+**Fixed costs are €289/yr, 2.89% of the account, paid whether or not anything
+trades.** At €50,000 the same €289 is 0.58%. The economics of this project
+improve faster with account size than with any plausible improvement in the
+strategies, and that is worth remembering when deciding where effort goes.
 
 ---
 
@@ -78,8 +84,14 @@ IBC (bundled in the container below) handles the login typing and the restart.
 
 ### 1. Provision
 
-Hetzner console → CX22, Helsinki, Ubuntu LTS, **add your SSH public key**
-(never enable password login). Then, as root:
+**New to this? Follow [SETUP.md](SETUP.md) instead** — it is written click by
+click, and uses `cloud-init.yaml` so the whole of this section happens
+automatically on first boot.
+
+Hetzner console → CX23, Helsinki, Ubuntu LTS, **add your SSH public key**
+(never enable password login), and paste `deploy/cloud-init.yaml` into the
+Cloud config box. That does everything below. To do it by hand instead, as
+root:
 
 ```bash
 adduser --disabled-password --gecos "" tradelab

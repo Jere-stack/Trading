@@ -1,0 +1,77 @@
+#cloud-config
+# Paste this into the "Cloud config" box when creating a Hetzner server.
+# It runs once, automatically, on first boot -- so the machine hardens and
+# installs itself and you never have to type any of it.
+#
+# You do NOT need to edit this file. Your SSH key is picked up from the one
+# you select in the Hetzner UI.
+#
+# Root login stays enabled with key-only auth on purpose. Disabling it before
+# you have confirmed the tradelab user works is how people lock themselves out
+# of a brand-new server. Tighten it later, once you are in.
+
+package_update: true
+package_upgrade: true
+
+packages:
+  - ufw
+  - fail2ban
+  - unattended-upgrades
+  - git
+  - curl
+  - ca-certificates
+  - netcat-openbsd
+
+users:
+  - default
+  - name: tradelab
+    shell: /bin/bash
+    sudo: ["ALL=(ALL) NOPASSWD:ALL"]
+    lock_passwd: true
+
+write_files:
+  - path: /etc/apt/apt.conf.d/20auto-upgrades
+    content: |
+      APT::Periodic::Update-Package-Lists "1";
+      APT::Periodic::Unattended-Upgrade "1";
+
+runcmd:
+  # Finnish time, so the nightly timer fires when you expect it to.
+  - timedatectl set-timezone Europe/Helsinki
+
+  # Reuse the SSH key you picked in the Hetzner UI: it lands on root, and this
+  # copies it to tradelab so you do not have to paste it twice.
+  - mkdir -p /home/tradelab/.ssh
+  - cp /root/.ssh/authorized_keys /home/tradelab/.ssh/authorized_keys
+  - chown -R tradelab:tradelab /home/tradelab/.ssh
+  - chmod 700 /home/tradelab/.ssh
+  - chmod 600 /home/tradelab/.ssh/authorized_keys
+
+  # Keys only. No passwords, for root or anyone else.
+  - sed -i 's/^#\?PasswordAuthentication.*/PasswordAuthentication no/' /etc/ssh/sshd_config
+  - sed -i 's/^#\?PermitRootLogin.*/PermitRootLogin prohibit-password/' /etc/ssh/sshd_config
+  - systemctl restart ssh
+
+  # Firewall: SSH in, nothing else. The IB Gateway API port is never exposed --
+  # the TWS API has no authentication of its own, so anything that can reach
+  # the port can trade the account.
+  - ufw default deny incoming
+  - ufw default allow outgoing
+  - ufw allow OpenSSH
+  - ufw --force enable
+  - systemctl enable --now fail2ban
+
+  # Docker, for IB Gateway.
+  - curl -fsSL https://get.docker.com -o /tmp/get-docker.sh
+  - sh /tmp/get-docker.sh
+  - usermod -aG docker tradelab
+  - systemctl enable --now docker
+
+  # uv, for the Python environment.
+  - su - tradelab -c 'curl -LsSf https://astral.sh/uv/install.sh | sh'
+
+  # A marker you can check for, so you know setup finished rather than guessing.
+  - touch /var/log/tradelab-ready
+  - echo "setup complete $(date -Is)" > /var/log/tradelab-ready
+
+final_message: "Server ready after $UPTIME seconds. SSH in as tradelab."
