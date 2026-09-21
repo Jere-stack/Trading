@@ -295,3 +295,127 @@ of model quality changes it.
 A *worthless* strategy is now expected to show an annualised Sharpe of **1.52**
 over three years of daily data, purely from selection across that many trials.
 Every future result is measured against that bar, and it rises with each test.
+
+---
+
+# Round 3: the one that got through, and what killed it
+
+Cleaning the universe changed every number. Five data defects had to be found
+first — and each was caught only because a result looked wrong, never by
+inspection:
+
+| Defect | Scale | Caught by |
+|---|---|---|
+| Sentinel prices ($1,000,000.00) | 291 symbols | low-vol returning −2.03% |
+| Stale series (60+ identical closes) | 991 symbols | same |
+| Impossible moves (>500%/session) | 183 symbols | placebo mean +562% |
+| **Not common stock** (preferreds, funds, foreign listings) | **54% of the list** | TMB Bank of Thailand outranking Microsoft |
+| **Dollar volume overstated by the reverse-split factor** | **up to 1,250×** | random large-caps returning −1.51% |
+
+After fixing all five, a cost-mitigation grid on momentum produced **two cells
+that beat SPY in both sample halves** — the first result in this project to
+clear a pre-registered rule.
+
+## It was not evidence, and the arithmetic says so
+
+2 of 16 is roughly what chance produces:
+
+| Per-cell pass probability | P(≥2 pass by luck) |
+|---|---|
+| 5% | 18.9% |
+| 15% | 71.6% |
+| 25% | **93.7%** |
+
+Momentum's overall excess in this universe is positive, so each half is better
+than a coin flip and p is well above 25%.
+
+## Four attacks, pre-specified
+
+**1. Every split point, not the convenient one.**
+
+| | Split dates where both halves win |
+|---|---|
+| h30/b40 | **51%** |
+| h50/b10 | 71% |
+
+**h30/b40 is a coin flip.** It cleared the rule because of where the median
+date happened to fall — the exact fragility the rule was meant to catch and
+didn't.
+
+**2. Year by year.** A halves test has two observations; this has fourteen.
+
+| | Positive years | Median year | Worst year |
+|---|---|---|---|
+| h30/b40 | 8 / 14 | +4.49% | **−41.40%** |
+| h50/b10 | 7 / 14 | **+0.12%** | **−41.43%** |
+
+Annual excess over SPY runs +50.0% (2020), −41.4% (2021), +43.0% (2022),
+−23.4% (2024). Four consecutive years swinging ninety points. h50/b10's median
+year is **zero**.
+
+**3. Cost.** The edge survives to 150bps — so cost is *not* what kills it.
+That matters: this rejection is about the signal's reliability, not account
+size, and a larger account would not rescue it.
+
+**4. Risk.**
+
+| | CAGR | Vol | maxDD |
+|---|---|---|---|
+| h30/b40 | 19.82% | **36.6%** | **−37.2%** |
+| SPY | 14.87% | 14.4% | −23.9% |
+
+Two and a half times the volatility for a median year that beats the index by
+4.5 points at best and 0.1 at worst. On €10,000, 2021's relative loss is
+**€4,140**.
+
+**Rejected.**
+
+## What is actually true after all this
+
+- **The universe handicap is real: −8.66%/yr**, and it is equal-weight versus
+  cap-weight, not size. A random 20 *within large caps* still loses 8.68%/yr to
+  SPY. In 2012–2026 cap-weighted concentration was the dominant factor and any
+  equal-weighted book fought it.
+- **Momentum generates genuine alpha over its own opportunity set: +8.58%/yr**
+  (14.80% against a 6.21% random-20 baseline). That is not nothing.
+- **It is not reliable enough to trade.** 8 of 14 positive years and a 51%
+  split-point pass rate describe a signal with a real mean and enormous
+  variance — which at €10,000, with no shorting and no leverage, is
+  indistinguishable from gambling.
+- **Low volatility does not beat high volatility on absolute return** here:
+  11.06% against 14.85%. It wins on Sharpe (0.70 vs 0.33) and drawdown
+  (−28.5% vs −55.9%). That is what the literature claims, and it is not the
+  bar that was set.
+
+## The deflation bar settles it
+
+181 configurations have now been evaluated. Over fourteen years of daily data,
+a **worthless** strategy is expected to show an annualised Sharpe of **0.73**
+purely from selection across that many trials.
+
+**h30/b40's realised Sharpe is 0.54.**
+
+The best thing found in the entire search scores *below* what pure selection
+noise produces at this trial count. There is no reading of that number which
+supports trading it.
+
+## Where this leaves the project
+
+Twelve hypotheses tested against real data. Zero survivors. That is the system
+working, not failing — every one of them was killed by a test fixed in advance,
+and four were killed by data defects that would have produced false discoveries
+had the tests been weaker.
+
+The bar was never the problem. The problem is that **at €10,000, long-only and
+unlevered, with price data alone, over a period when cap-weighted mega-caps
+returned 14.87%/yr, there is nothing in the price-only anomaly space that
+clears it reliably.**
+
+The two remaining honest moves are unchanged and now better evidenced:
+
+1. **Grow the account to ~€25,000 before buying fundamentals data.** The
+   anomalies that actually replicate — value, profitability, investment — need
+   it, and at €10k it costs 7.20%/yr, more than the edge is worth.
+2. **Hold the index and keep the search running at zero incremental cost.**
+   The infrastructure is built; each future test costs nothing but a rising
+   deflation bar.
