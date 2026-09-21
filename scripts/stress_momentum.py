@@ -30,13 +30,11 @@ import argparse
 from datetime import UTC, datetime
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
 
 from scripts.study_cross_section import load_panel
 from tradelab.research.cross_section import run_backtest, signal_momentum_12_1
 
-LARGE_CAP_FLOOR = 92_000_000.0
 SURVIVORS = [(30, 40), (50, 10)]
 
 
@@ -64,11 +62,22 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--bars", type=Path, default=Path("data/bars/us-universe"))
     parser.add_argument("--benchmarks", type=Path, default=Path("data/bars/benchmarks"))
+    parser.add_argument(
+        "--min-dollar-volume",
+        type=float,
+        default=2_000_000,
+        help="Must match the floor the surviving cells were found at, or this "
+        "stress-tests a different strategy than the one that passed.",
+    )
     args = parser.parse_args()
 
     print("=" * 84)
     print("STRESS TEST  --  trying to kill the two surviving momentum configurations")
     print("=" * 84)
+    print(
+        f"\nLiquidity floor ${args.min_dollar_volume:,.0f}/day -- MUST match the grid "
+        "that produced the survivors."
+    )
 
     closes, volumes = load_panel(args.bars)
     spy = pd.read_parquet(args.benchmarks / "SPY.parquet").sort_values("timestamp")
@@ -87,7 +96,7 @@ def main() -> None:
             name=f"h{hold}b{band}",
             n_hold=hold,
             hold_band=band,
-            min_dollar_volume=LARGE_CAP_FLOOR,
+            min_dollar_volume=args.min_dollar_volume,
             cost_bps=45.0,
         )
 
@@ -151,7 +160,7 @@ def main() -> None:
                 name="c",
                 n_hold=hold,
                 hold_band=band,
-                min_dollar_volume=LARGE_CAP_FLOOR,
+                min_dollar_volume=args.min_dollar_volume,
                 cost_bps=cost,
             )
             first, last = r.equity.index[0], r.equity.index[-1]
@@ -193,7 +202,7 @@ def main() -> None:
             f"   h{hold}b{band:<7}{s['cagr']:>9.2%}{s['vol']:>8.1%}{s['maxdd']:>9.1%}"
             f"{r.turnover:>10.0%}"
         )
-    b = list(results.values())[0].benchmark_stats
+    b = next(iter(results.values())).benchmark_stats
     print(f"   {'SPY':<10}{b['cagr']:>9.2%}{b['vol']:>8.1%}{b['maxdd']:>9.1%}{0:>10.0%}")
 
     print("\n" + "=" * 84)

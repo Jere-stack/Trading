@@ -91,6 +91,7 @@ def main() -> None:
                     n_hold=n_hold,
                     hold_band=band,
                     cost_bps=COST_BPS,
+                    min_dollar_volume=args.min_dollar_volume,
                 )
             except ValueError:
                 continue
