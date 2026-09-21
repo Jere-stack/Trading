@@ -131,6 +131,7 @@ Dependencies point inward only.
 | [09 Roadmap](docs/09-roadmap.md) | Strategy, end goal, ordered next steps, AI architecture |
 | [10 Paper trading](docs/10-paper-trading.md) | First run, four FX defects it surfaced, why gross exposure caps at 0.80x |
 | [11 Research ledger](docs/11-research-ledger.md) | Append-only trial record; why the DSR needs it and how it resists revision |
+| [12 Benchmark results](docs/12-benchmark-results.md) | Four hypotheses tested against SPY/QQQ, all rejected, with the evidence |
 | [Server setup](deploy/SETUP.md) | Click-by-click first-time deployment on a Hetzner box |
 | [Deployment reference](deploy/README.md) | Provider comparison, hardening, cost arithmetic, going live |
 | [05 Research protocol](docs/05-research-protocol.md) | The 10-stage validation gauntlet and its hard gates |
