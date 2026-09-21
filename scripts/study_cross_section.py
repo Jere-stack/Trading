@@ -38,8 +38,37 @@ from tradelab.research.cross_section import (
     signal_momentum_12_1,
 )
 from tradelab.research.screening import screen_price_series
+from tradelab.research.universe import survivorship_check, us_common_stocks
 
 COST_BPS = 45.0
+
+
+def tradable_universe(reference: Path = Path("data/reference/us_symbols.parquet")) -> set[str]:
+    """US common stocks only, or None if the reference list is missing.
+
+    Without it the panel holds preferred series, closed-end funds and foreign
+    listings priced in their own currency -- TMB Bank of Thailand appeared at
+    $24,100 a share and $4.5bn/day, ahead of Microsoft, in a top-500 screen.
+    """
+    if not reference.exists():
+        print("  WARNING: no symbol reference; universe will include non-common-stock")
+        return set()
+    symbols = pd.read_parquet(reference)
+    keep = us_common_stocks(symbols)
+    check = survivorship_check(symbols)
+    gap = check.loc["live", "keep_rate"] - check.loc["delisted", "keep_rate"]
+    print(
+        f"  universe filter: {len(keep):,} US common stocks, "
+        f"survivorship gap {gap:+.1%} (live {check.loc['live', 'keep_rate']:.1%} vs "
+        f"delisted {check.loc['delisted', 'keep_rate']:.1%})"
+    )
+    if abs(gap) >= 0.06:
+        raise SystemExit(
+            f"universe filter is survival-biased ({gap:+.1%}); refusing to run. "
+            "A rule that deletes failures at a different rate than survivors "
+            "reintroduces exactly the bias this universe was bought to remove."
+        )
+    return keep
 
 
 def load_panel(bar_dir: Path, min_ever_liquid: float = 1_000_000):
@@ -51,11 +80,18 @@ def load_panel(bar_dir: Path, min_ever_liquid: float = 1_000_000):
     """
     closes, volumes = {}, {}
     rejected: dict[str, int] = {}
+    universe = tradable_universe()
     scanned = kept = broken = 0
+    off_universe = 0
     for path in sorted(bar_dir.glob("*.parquet")):
         scanned += 1
+        if universe and path.stem.upper() not in universe:
+            off_universe += 1
+            continue
         try:
-            frame = pd.read_parquet(path, columns=["timestamp", "close", "volume"])
+            frame = pd.read_parquet(
+                path, columns=["timestamp", "close", "volume", "unadjusted_close"]
+            )
         except Exception:
             continue
         if len(frame) < 300:
@@ -66,7 +102,17 @@ def load_panel(bar_dir: Path, min_ever_liquid: float = 1_000_000):
             broken += 1
             rejected[verdict.rule] = rejected.get(verdict.rule, 0) + 1
             continue
-        dollar = close * frame["volume"].to_numpy(dtype=float)
+        # Dollar volume cannot be computed from one price series. `close` is
+        # split-adjusted and `volume` is not consistently so, which overstates
+        # liquidity by the entire reverse-split factor: PTN shows $291M/day
+        # against a true $233k, CIFS $2.1bn against $1.9M. Taking the MINIMUM of
+        # the adjusted and unadjusted measures is the conservative reading --
+        # a name counts as liquid only if it clears the bar under either
+        # interpretation, which is what stopped the "top 500 by dollar volume"
+        # universe from filling with collapsing shells.
+        volume = frame["volume"].to_numpy(dtype=float)
+        unadjusted = frame["unadjusted_close"].to_numpy(dtype=float)
+        dollar = np.minimum(close * volume, unadjusted * volume)
         if float(np.nanmedian(dollar)) < min_ever_liquid:
             continue
         stamps = pd.DatetimeIndex(frame["timestamp"])
@@ -76,7 +122,10 @@ def load_panel(bar_dir: Path, min_ever_liquid: float = 1_000_000):
         closes[symbol] = pd.Series(close, index=stamps)
         volumes[symbol] = pd.Series(dollar, index=stamps)
         kept += 1
-    print(f"  scanned {scanned:,} symbols, kept {kept:,}, rejected {broken:,}")
+    print(
+        f"  scanned {scanned:,} symbols, kept {kept:,}, "
+        f"{off_universe:,} outside the common-stock universe, {broken:,} bad prices"
+    )
     for reason, count in sorted(rejected.items(), key=lambda kv: -kv[1]):
         print(f"    {count:>6,}  {reason}")
     close_panel = pd.DataFrame(closes).sort_index()
