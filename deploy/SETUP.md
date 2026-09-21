@@ -234,3 +234,69 @@ laptop is shut.
 
 Cancel any time; Hetzner bills by the hour, so a server you delete after a week
 costs about €1.50.
+
+---
+
+## Step 10 — The performance dashboard
+
+After any session, generate the report:
+
+```bash
+cd /opt/tradelab
+.venv/bin/python scripts/make_report.py
+```
+
+That writes `state/paper/report.html` — one self-contained file: equity curve,
+drawdown, per-strategy P&L, risk events. No internet needed to open it.
+
+Step 9's timer regenerates it automatically after every nightly run, so what
+you open is never older than the last session.
+
+**To read it from the iPad**, run a tiny read-only web server bound to
+localhost:
+
+```bash
+sudo tee /etc/systemd/system/tradelab-report.service >/dev/null <<'UNIT'
+[Unit]
+Description=Serve the tradelab report on the private network
+[Service]
+User=tradelab
+WorkingDirectory=/opt/tradelab/state/paper
+ExecStart=/usr/bin/python3 -m http.server 8080 --bind 127.0.0.1
+Restart=always
+[Install]
+WantedBy=multi-user.target
+UNIT
+sudo systemctl daemon-reload && sudo systemctl enable --now tradelab-report
+```
+
+`--bind 127.0.0.1` means it is not reachable from the internet, only from the
+machine itself. To reach it from the iPad, install
+[Tailscale](https://tailscale.com) (free) on both:
+
+```bash
+curl -fsSL https://tailscale.com/install.sh | sh
+sudo tailscale up
+```
+
+Install the Tailscale app on the iPad, sign in with the same account, and open
+`http://tradelab:8080/report.html`. Bookmark it.
+
+> Tailscale builds a private network between your own devices. The report is
+> never exposed to the public internet, and neither is anything else on the
+> server.
+
+**No Tailscale?** Copy the file across instead — in Termius, use SFTP to
+download `/opt/tradelab/state/paper/report.html` and open it. Works, but you
+repeat it each time.
+
+## What the dashboard will not tell you
+
+**There is nothing to watch in real time.** This system makes one decision per
+night, after the US close. During the day it is doing nothing, on purpose —
+watching a daily-bar system tick by tick would be theatre, and the impulse to
+intervene on what you see there is how systematic strategies get abandoned in
+their worst month.
+
+Check it weekly. Two months in, the honest question is not "am I up?" but "did
+the system do what it was told, and did the costs match the model?"

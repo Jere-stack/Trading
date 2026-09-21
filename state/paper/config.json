@@ -14,7 +14,7 @@
   "strategy": "monthly_equal_weight",
   "initial_cash_eur": 10000.0,
   "base_currency": "EUR",
-  "started": "2026-09-19T20:21:48.891253+00:00",
+  "started": "2026-09-21T15:23:54.802414+00:00",
   "last_session": "2026-09-18T00:00:00+00:00",
   "purpose": "Plumbing validation, not alpha. Simulated fills against real daily prices. Does not validate IBKR API integration."
 }

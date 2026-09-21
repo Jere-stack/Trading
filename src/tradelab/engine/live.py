@@ -480,20 +480,19 @@ class LiveRunner:
                     severity="WARNING",
                 )
                 continue
-            self._log("fx_convert", str(action))
-            if self.state_store is not None:
-                self.state_store.log_event(
-                    "fx_convert",
-                    str(action),
-                    "INFO",
-                    {
-                        "from": action.from_currency,
-                        "to": action.to_currency,
-                        "amount": str(action.amount_from),
-                        "cost": str(action.cost),
-                    },
-                    now,
-                )
+            # `_log` already persists to the state store. Calling log_event
+            # again here wrote every conversion twice, which makes an audit
+            # trail overstate how often the account actually traded currency.
+            self._log(
+                "fx_convert",
+                str(action),
+                payload={
+                    "from": action.from_currency,
+                    "to": action.to_currency,
+                    "amount": str(action.amount_from),
+                    "cost": str(action.cost),
+                },
+            )
 
     def _is_data_fresh(self, now: datetime) -> bool:
         if not self._price_stamps:

@@ -14,8 +14,15 @@ back in.
 
     EODHD_API_TOKEN=... .venv/bin/python scripts/download_dividends.py
 
-Resumable: symbols already written are skipped, so an interrupted run is
-resumed by re-running it.
+Resumable, and the resumption is real rather than nominal: results are flushed
+to disk every `--checkpoint` symbols, so a run killed at 5,000 symbols resumes
+from 5,000 rather than from zero.
+
+That is not hypothetical. The first attempt accumulated everything in memory
+and wrote once at the end; the container it ran in was recycled after 5,000
+symbols and the entire run was lost, having written nothing. A long job whose
+output exists only in memory has no partial success -- only total success or
+total loss.
 """
 
 from __future__ import annotations
@@ -38,6 +45,12 @@ def main() -> None:
     parser.add_argument("--start", default="2005-01-01")
     parser.add_argument("--workers", type=int, default=8)
     parser.add_argument("--limit", type=int, default=0, help="Stop after N symbols (for testing)")
+    parser.add_argument(
+        "--checkpoint",
+        type=int,
+        default=500,
+        help="Flush to disk every N symbols. Lower is safer, slightly slower.",
+    )
     parser.add_argument("--token", default=None)
     args = parser.parse_args()
 
@@ -64,31 +77,49 @@ def main() -> None:
     start = datetime.fromisoformat(args.start).replace(tzinfo=UTC)
     end = datetime.now(UTC)
 
-    collected: list[pd.DataFrame] = []
+    def flush(buffer: list[pd.DataFrame]) -> None:
+        """Append `buffer` to the parquet on disk, atomically.
+
+        Written to a temporary file and renamed, so a process killed mid-write
+        leaves the previous good file rather than a truncated one.
+        """
+        if not buffer:
+            return
+        merged = pd.concat(buffer, ignore_index=True)
+        if shard_path.exists():
+            merged = pd.concat([pd.read_parquet(shard_path), merged], ignore_index=True)
+        merged = merged.sort_values(["symbol", "ex_date"]).reset_index(drop=True)
+        tmp = shard_path.with_suffix(".parquet.tmp")
+        merged.to_parquet(tmp, index=False)
+        tmp.replace(shard_path)
+
+    buffer: list[pd.DataFrame] = []
     began = time.time()
     with_dividends = 0
+    processed = 0
     for index, frame in enumerate(provider.iter_dividends(pending, start, end), start=1):
+        processed = index
         if not frame.empty:
-            collected.append(frame)
+            buffer.append(frame)
             with_dividends += 1
-        if index % 1000 == 0:
+        if index % args.checkpoint == 0:
+            flush(buffer)
+            buffer = []
             rate = index / max(time.time() - began, 1e-9)
             remaining = (len(pending) - index) / max(rate, 1e-9)
             print(
                 f"  {index:>6,}/{len(pending):,}  {with_dividends:,} paying  "
                 f"{rate:.0f}/s  ~{remaining / 60:.0f} min left  "
-                f"{len(provider.failures):,} failed"
+                f"{len(provider.failures):,} failed  [saved]",
+                flush=True,
             )
+    flush(buffer)
 
-    if not collected:
+    if not shard_path.exists():
         print("no dividend records returned")
         return
-
-    fresh = pd.concat(collected, ignore_index=True)
-    if shard_path.exists():
-        fresh = pd.concat([pd.read_parquet(shard_path), fresh], ignore_index=True)
-    fresh = fresh.sort_values(["symbol", "ex_date"]).reset_index(drop=True)
-    fresh.to_parquet(shard_path, index=False)
+    fresh = pd.read_parquet(shard_path)
+    print(f"\nprocessed {processed:,} symbols this run")
 
     have_declaration = int(fresh["declaration_date"].notna().sum())
     metadata = {

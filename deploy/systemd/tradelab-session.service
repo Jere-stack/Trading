@@ -9,6 +9,10 @@ User=tradelab
 WorkingDirectory=/opt/tradelab
 EnvironmentFile=/opt/tradelab/deploy/.env
 ExecStart=/opt/tradelab/.venv/bin/python scripts/paper_session.py
+# Regenerate the HTML report straight after, so what you open is never older
+# than the last session. ExecStartPost failing does not fail the run: a broken
+# report must never look like a broken trading session.
+ExecStartPost=-/opt/tradelab/.venv/bin/python scripts/make_report.py
 
 # The run touches the state database and the repository working tree, and
 # nothing else on the machine.
