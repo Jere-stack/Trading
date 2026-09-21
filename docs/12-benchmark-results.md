@@ -167,3 +167,131 @@ accumulates.
 ```bash
 .venv/bin/python -m tradelab.cli ledger
 ```
+
+---
+
+# Round 2: the published strategies, tested
+
+Sourced from the replication literature rather than from a backtest list,
+because the base rate for "strategies from papers" is measurable and dismal:
+
+- **Hou, Xue & Zhang (2020)**: 65% of 452 published anomalies fail a t>1.96
+  hurdle; 82% fail at t>2.78.
+- **McLean & Pontiff (2016)**: post-publication returns run ~26% below
+  in-sample.
+- **paperswithbacktest**, across 4,843 backtested papers: **median annualised
+  return 1.5%**.
+
+Two candidates were killed on published evidence without spending a test:
+**volatility-managed portfolios** (Cederburg et al. show out-of-sample failure;
+Barroso & Detzel show costs kill it) and the **low-risk family's
+absolute-return claim** (lower returns than the market in most decades — higher
+Sharpe only).
+
+## Results — 165 monthly rebalances, 2012-10 to 2026-09
+
+Point-in-time liquid universe, survivorship-free, prices screened, 45bps on the
+traded fraction, 20 names, long-only.
+
+| | CAGR | Vol | maxDD | Turnover | Cost | vs SPY | vs QQQ |
+|---|---|---|---|---|---|---|---|
+| N5 low idiosyncratic vol | 10.63% | 16.1% | −31.6% | 33% | 1.96% | **−4.24%** | −9.33% |
+| N6 low total vol | 3.30% | 11.6% | −29.3% | 36% | 2.03% | **−11.57%** | −16.66% |
+| N7 momentum 12-1 | 13.78% | 42.1% | −52.0% | 55% | 3.16% | **−1.09%** | −6.18% |
+| N8 52-week high | 8.70% | 18.9% | −39.7% | 96% | 5.65% | **−6.17%** | −11.27% |
+| *(control)* high vol | −5.18% | 44.6% | −85.9% | 36% | 1.86% | −20.05% | −25.14% |
+| *(control)* momentum losers | −13.61% | 59.2% | −92.8% | 53% | 2.39% | −28.48% | −33.57% |
+| **BUY & HOLD SPY** | **14.87%** | 18.6% | −35.2% | — | — | — | |
+| **BUY & HOLD QQQ** | **19.96%** | | | — | — | | — |
+
+**None beat the index.** But read the control rows — they are the informative
+ones.
+
+## The signals are real. The alpha is on the wrong side.
+
+Momentum winners return 13.78%; momentum losers return −13.61%. **A 27-point
+spread.** Low-vol returns 10.63% against high-vol's −5.18%, a 16-point spread.
+
+The rankings work. The effects exist. **But the long leg alone does not beat
+the index, and the short leg — where most of the spread lives — is closed to a
+long-only cash-equity mandate.**
+
+That is the structural finding of this whole exercise, and it generalises:
+every price-only effect that survives replication is either a *risk reducer*
+(better Sharpe, worse absolute return) or a *long-short spread* (needs
+shorting). Neither is accessible to a long-only, unlevered account.
+
+## N7b: can cost mitigation flip momentum?
+
+Momentum was the one candidate where **cost, not signal, was binding**: gross
+16.94% against SPY's 14.87%. So the full Novy-Marx & Velikov **buy/hold
+spread** was implemented — their taxonomy names it the single most effective
+simple cost mitigation.
+
+A 4×4 grid of hold size × band, with the decision rule fixed *before* running:
+**accept only if the same configuration beats SPY in both sample halves.**
+
+The mitigation worked exactly as documented — turnover 51% → 37%, cost drag
+2.99% → 2.12%/yr.
+
+**Zero of 16 cells beat SPY in both halves.** Every single one loses in the
+first half, by 2.84 to 17.0 points.
+
+The best cell shows **+1.10%/yr over SPY** — and is precisely what the rule
+exists to catch: best-of-16 selection on a result that is −2.84% in the first
+half and +5.15% in the second. A regime bet wearing a backtest.
+
+Risk makes it worse than the return gap suggests:
+
+| | CAGR | Vol | maxDD | On €10,000 |
+|---|---|---|---|---|
+| SPY | 14.87% | 18.6% | −35.2% | −€3,520 at the trough |
+| Momentum | 13.78% | **42.1%** | **−52.0%** | **−€5,200** |
+
+2.3× the volatility, a deeper hole, and 20 names instead of 500 — to *match*
+the index.
+
+## A third data corruption, found by a nonsense result
+
+The first low-volatility run returned **−2.03%/yr with a −48.7% drawdown**. A
+low-volatility strategy cannot do that, so I looked at what it held: stocks
+priced at exactly **$1,000,000.00 with 0.0% volatility.**
+
+Sentinel values from overflowed split adjustments. **291 symbols** carry them;
+**991** have 60+ consecutive identical closes. A constant series has zero
+volatility, so a low-vol sort ranks it *first* — and it sits exactly at its
+52-week high, so it poisons that signal too. The earlier >500%-move screen let
+them through untouched, because a constant series has no moves at all.
+
+After screening, low-vol returns 3.30% — a **5.3-point swing**.
+
+These biases all run one way: zero volatility, infinite return, permanent
+highs. **The direction that makes a strategy look fundable.**
+
+## What it would cost to test the anomalies that *do* replicate
+
+The survivors of Hou/Xue/Zhang are **value, profitability, investment** — all
+fundamentals-based. Testing them needs EODHD's Fundamentals tier at €60/month.
+
+| Account | Data cost as % of capital | Net edge needed just to break even |
+|---|---|---|
+| **€10,000** | **7.20%** | **7.20%/yr** |
+| €25,000 | 2.88% | 2.88%/yr |
+| €50,000 | 1.44% | 1.44%/yr |
+| €100,000 | 0.72% | 0.72%/yr |
+
+At a literature-plausible 3% net edge, **break-even is €24,000.**
+
+Full stack at €10k — EOD €199 + fundamentals €720 + hosting €90 — is
+**€1,009/yr, 10.1% of capital**, consuming **68% of a benchmark-matching
+return before any alpha at all.**
+
+**At €10,000, the data required to find an edge costs more than the edge is
+worth.** That is not a research problem. It is an arithmetic one, and no amount
+of model quality changes it.
+
+## Standing at 134 configurations
+
+A *worthless* strategy is now expected to show an annualised Sharpe of **1.52**
+over three years of daily data, purely from selection across that many trials.
+Every future result is measured against that bar, and it rises with each test.
