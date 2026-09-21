@@ -130,3 +130,130 @@ class TestOmissions:
     def test_too_little_history_is_not_an_omission(self):
         rows = quarterly("XYZ", 2012, 2012, 0.40)[:2]
         assert detect_omissions(divs(rows), universe_end=datetime(2017, 1, 1, tzinfo=UTC)) == []
+
+
+class TestEventStudyIntegrity:
+    """The placebo is the only thing standing between a pipeline and a fiction."""
+
+    def test_a_stock_matching_the_index_shows_zero_alpha(self):
+        """The core arithmetic: abnormal return is excess over the benchmark."""
+        from datetime import UTC
+
+        from tradelab.research.event_study import Event, abnormal_returns, summarise_car
+
+        idx = pd.date_range("2020-01-01", periods=80, freq="D")
+        path = [100.0 * (1.001**i) for i in range(80)]
+        bars = pd.concat(
+            [pd.DataFrame({"symbol": f"S{k}", "timestamp": idx, "close": path}) for k in range(10)],
+            ignore_index=True,
+        )
+        same = pd.DataFrame({"timestamp": idx, "close": path})
+        events = [Event(f"S{k}", datetime(2020, 1, 10, tzinfo=UTC)) for k in range(10)]
+        result = summarise_car(abnormal_returns(bars, events, same, [21]), 21)
+        assert result.mean == pytest.approx(0.0, abs=1e-9)
+
+    def test_drift_against_a_flat_index_is_recovered_exactly(self):
+        from datetime import UTC
+
+        from tradelab.research.event_study import Event, abnormal_returns, summarise_car
+
+        idx = pd.date_range("2020-01-01", periods=80, freq="D")
+        bars = pd.concat(
+            [
+                pd.DataFrame(
+                    {
+                        "symbol": f"S{k}",
+                        "timestamp": idx,
+                        "close": [100.0 * (1.001**i) for i in range(80)],
+                    }
+                )
+                for k in range(10)
+            ],
+            ignore_index=True,
+        )
+        flat = pd.DataFrame({"timestamp": idx, "close": [100.0] * 80})
+        events = [Event(f"S{k}", datetime(2020, 1, 10, tzinfo=UTC)) for k in range(10)]
+        result = summarise_car(abnormal_returns(bars, events, flat, [21]), 21)
+        assert result.mean == pytest.approx(1.001**21 - 1, abs=1e-9)
+
+    def test_tz_aware_and_naive_bars_align_identically(self):
+        """Prevents: a silent one-day shift on a subset of events.
+
+        Bar files are tz-naive; dividend declarations arrive tz-aware. An
+        earlier version normalised only one of the two paths, and the bug was
+        invisible because the unit test happened to use naive bars.
+        """
+        from datetime import UTC
+
+        from tradelab.research.event_study import Event, abnormal_returns, summarise_car
+
+        means = []
+        for tz in (None, "UTC"):
+            idx = pd.date_range("2020-01-01", periods=80, freq="D", tz=tz)
+            bars = pd.concat(
+                [
+                    pd.DataFrame(
+                        {
+                            "symbol": f"S{k}",
+                            "timestamp": idx,
+                            "close": [100.0 * (1.001**i) for i in range(80)],
+                        }
+                    )
+                    for k in range(10)
+                ],
+                ignore_index=True,
+            )
+            flat = pd.DataFrame({"timestamp": idx, "close": [100.0] * 80})
+            events = [Event(f"S{k}", datetime(2020, 1, 10, tzinfo=UTC)) for k in range(10)]
+            means.append(summarise_car(abnormal_returns(bars, events, flat, [21]), 21).mean)
+        assert means[0] == pytest.approx(means[1], abs=1e-12)
+
+    def test_entry_on_the_event_date_is_refused(self):
+        """Prevents: buying at a close that already contains the news."""
+        from datetime import UTC
+
+        from tradelab.research.event_study import Event, abnormal_returns
+
+        idx = pd.date_range("2020-01-01", periods=40, freq="D")
+        bars = pd.DataFrame({"symbol": "S", "timestamp": idx, "close": [100.0] * 40})
+        with pytest.raises(ValueError, match="already reflects the announcement"):
+            abnormal_returns(
+                bars,
+                [Event("S", datetime(2020, 1, 10, tzinfo=UTC))],
+                bars.rename(columns={"close": "close"}),
+                [5],
+                entry_lag=0,
+            )
+
+    def test_clustered_t_is_smaller_when_events_share_a_month(self):
+        """Prevents: 400 events from one crisis counted as 400 independent bets.
+
+        Dividend cuts cluster in crises. The naive t-statistic treats them as
+        independent and will report significance on what is really a handful of
+        correlated observations.
+        """
+        from datetime import UTC
+
+        from tradelab.research.event_study import Event, abnormal_returns, summarise_car
+
+        idx = pd.date_range("2020-01-01", periods=200, freq="D")
+        bars = pd.concat(
+            [
+                pd.DataFrame(
+                    {
+                        "symbol": f"S{k}",
+                        "timestamp": idx,
+                        "close": [100.0 * (1.0005**i) for i in range(200)],
+                    }
+                )
+                for k in range(40)
+            ],
+            ignore_index=True,
+        )
+        flat = pd.DataFrame({"timestamp": idx, "close": [100.0] * 200})
+        # Every event in the same month: one real observation, not forty.
+        clustered = [Event(f"S{k}", datetime(2020, 2, 3, tzinfo=UTC)) for k in range(40)]
+        result = summarise_car(abnormal_returns(bars, clustered, flat, [21]), 21)
+        assert result.monthly_n == 1
+        assert result.monthly_t == 0.0, "a single month cannot support a t-statistic"
+        assert not result.is_significant

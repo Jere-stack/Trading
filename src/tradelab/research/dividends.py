@@ -240,3 +240,89 @@ def detect_omissions(
             )
         )
     return out
+
+
+@dataclass(frozen=True)
+class DividendInitiation:
+    """A company's first dividend, dated by declaration.
+
+    The mirror image of a cut, and the more useful one here. A cut is a
+    forced-*seller* story that a long-only mandate can act on only by not
+    holding. An initiation is a forced-*buyer* story: funds with an income
+    mandate may hold only dividend payers, so a company becoming one is
+    mechanically bought by a class of investor that was previously barred from
+    owning it -- and they buy on the calendar, not on the price.
+
+    It is also a costly signal in the same sense a cut is. Management binds
+    itself to a recurring payment it will be punished for withdrawing, which is
+    not something a board does lightly about earnings it does not expect to
+    persist.
+    """
+
+    symbol: str
+    event_date: datetime
+    ex_date: datetime
+    annual_rate: float
+    yield_estimate: float
+    """Annualised rate over the price at declaration, where price is known."""
+    date_is_inferred: bool = False
+
+
+def detect_initiations(
+    frame: pd.DataFrame,
+    *,
+    min_history_days: int = 730,
+    first_bar: dict[str, datetime] | None = None,
+    require_declaration: bool = True,
+) -> list[DividendInitiation]:
+    """Find first-ever dividends, excluding companies that were already paying.
+
+    **`first_bar` is what makes this honest.** A company whose price history
+    starts in 2005 and whose first dividend record is also 2005 may have been
+    paying since 1990 -- the data simply begins mid-stream. Counting that as an
+    initiation fills the sample with established payers misclassified as new
+    ones, which is a silent contamination in the direction of "no effect",
+    because established payers have no reason to drift.
+
+    Passing `first_bar` (symbol -> first price bar) requires a real gap of
+    `min_history_days` between a company appearing in the data and its first
+    dividend, so the initiation is observed rather than assumed. Without it,
+    the function still runs but the caller is told nothing about how many
+    events are actually resumptions of a stream that predates the data.
+    """
+    out: list[DividendInitiation] = []
+    for symbol, group in frame.groupby("symbol", observed=True):
+        group = group.sort_values("ex_date")
+        rate = _annualised(group)
+        regular = group[rate.notna()]
+        if regular.empty:
+            continue
+        regular = regular.assign(rate=_annualised(regular))
+        first = regular.iloc[0]
+
+        if first_bar is not None:
+            started = first_bar.get(str(symbol))
+            if started is None:
+                continue
+            gap = (pd.Timestamp(first["ex_date"]) - pd.Timestamp(started)).days
+            if gap < min_history_days:
+                continue  # may have been paying before the data begins
+
+        declaration = first["declaration_date"]
+        has_declaration = pd.notna(declaration)
+        if require_declaration and not has_declaration:
+            continue
+
+        out.append(
+            DividendInitiation(
+                symbol=str(symbol),
+                event_date=pd.Timestamp(
+                    declaration if has_declaration else first["ex_date"]
+                ).to_pydatetime(),
+                ex_date=pd.Timestamp(first["ex_date"]).to_pydatetime(),
+                annual_rate=float(first["rate"]),
+                yield_estimate=0.0,
+                date_is_inferred=not has_declaration,
+            )
+        )
+    return out
