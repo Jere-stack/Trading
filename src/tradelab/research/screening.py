@@ -48,6 +48,12 @@ MIN_BARS = 300
 class ScreenResult:
     ok: bool
     reason: str = ""
+    rule: str = ""
+    """Which rule fired, without the instance-specific detail.
+
+    `reason` says "771 identical closes in a row"; `rule` says "stale series".
+    Aggregating on `reason` produces one bucket per symbol, which hides the
+    shape of the contamination behind a wall of counts."""
 
 
 def longest_flat_run(closes: np.ndarray) -> int:
@@ -67,18 +73,20 @@ def screen_price_series(closes: np.ndarray, *, min_bars: int = MIN_BARS) -> Scre
     """Decide whether a close series can be trusted in a backtest."""
     closes = np.asarray(closes, dtype=float)
     if closes.size < min_bars:
-        return ScreenResult(False, f"only {closes.size} bars")
+        return ScreenResult(False, f"only {closes.size} bars", "too few bars")
     if not np.isfinite(closes).all():
-        return ScreenResult(False, "non-finite closes")
+        return ScreenResult(False, "non-finite closes", "non-finite")
     if (closes <= 0).any():
-        return ScreenResult(False, "non-positive close")
+        return ScreenResult(False, "non-positive close", "non-positive")
     if (closes >= MAX_PLAUSIBLE_PRICE).any():
-        return ScreenResult(False, f"close >= ${MAX_PLAUSIBLE_PRICE:,.0f} (sentinel)")
+        return ScreenResult(False, f"close >= ${MAX_PLAUSIBLE_PRICE:,.0f}", "sentinel price")
     with np.errstate(divide="ignore", invalid="ignore"):
         moves = np.abs(np.diff(closes) / closes[:-1])
     if (np.isfinite(moves) & (moves > MAX_SESSION_MOVE)).any():
-        return ScreenResult(False, f"single-session move > {MAX_SESSION_MOVE:.0%}")
+        return ScreenResult(
+            False, f"single-session move > {MAX_SESSION_MOVE:.0%}", "impossible move"
+        )
     flat = longest_flat_run(closes)
     if flat >= MAX_STALE_RUN:
-        return ScreenResult(False, f"{flat} identical closes in a row (stale)")
+        return ScreenResult(False, f"{flat} identical closes in a row", "stale series")
     return ScreenResult(True)

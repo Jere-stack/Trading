@@ -64,9 +64,7 @@ def load_panel(bar_dir: Path, min_ever_liquid: float = 1_000_000):
         verdict = screen_price_series(close)
         if not verdict.ok:
             broken += 1
-            rejected[verdict.reason.split("(")[0].strip()] = (
-                rejected.get(verdict.reason.split("(")[0].strip(), 0) + 1
-            )
+            rejected[verdict.rule] = rejected.get(verdict.rule, 0) + 1
             continue
         dollar = close * frame["volume"].to_numpy(dtype=float)
         if float(np.nanmedian(dollar)) < min_ever_liquid:

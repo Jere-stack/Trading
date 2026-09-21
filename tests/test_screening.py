@@ -34,7 +34,7 @@ class TestSentinelPrices:
         values[50:] = 1_000_000.0
         result = screen_price_series(values)
         assert not result.ok
-        assert "sentinel" in result.reason
+        assert result.rule == "sentinel price"
 
     def test_the_threshold_is_where_it_is_documented(self):
         """Scaled wholesale, so only the price rule can fire -- injecting a
@@ -59,7 +59,7 @@ class TestStaleSeries:
         values[100:175] = values[100]
         result = screen_price_series(values)
         assert not result.ok
-        assert "stale" in result.reason
+        assert result.rule == "stale series"
 
     def test_a_short_flat_run_is_tolerated(self):
         values = series()
@@ -88,7 +88,7 @@ class TestImpossibleMoves:
         values[200:] *= 1000.0  # -> ~$1,000, a 100,000% single-session move
         result = screen_price_series(values)
         assert not result.ok
-        assert "single-session move" in result.reason, result.reason
+        assert result.rule == "impossible move", result.reason
 
 
 class TestBasicSanity:
