@@ -49,11 +49,18 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--bars", type=Path, default=Path("data/bars/us-universe"))
     parser.add_argument("--benchmarks", type=Path, default=Path("data/bars/benchmarks"))
+    parser.add_argument(
+        "--min-dollar-volume",
+        type=float,
+        default=2_000_000,
+        help="Liquidity floor. ~92,000,000 approximates the top 500 US names.",
+    )
     args = parser.parse_args()
 
     print("=" * 86)
     print("N7b  MOMENTUM + BUY/HOLD SPREAD  --  can cost mitigation flip the verdict?")
     print("=" * 86)
+    print(f"\nLiquidity floor ${args.min_dollar_volume:,.0f}/day.")
 
     closes, volumes = load_panel(args.bars)
     spy = pd.read_parquet(args.benchmarks / "SPY.parquet").sort_values("timestamp")
