@@ -62,6 +62,12 @@ def main() -> None:
              "SEC's 10 requests/second, then run once without --shard to write the registry.",
     )
     parser.add_argument("--interval", type=float, default=0.13)
+    parser.add_argument(
+        "--cached-only", action="store_true",
+        help="build the registry from cached submissions only (no network); uncached filers "
+             "keep their frames name and no ticker. For smoke tests while a scan is running.",
+    )
+    parser.add_argument("--out", type=Path, default=OUT)
     args = parser.parse_args()
     client = SecClient(min_interval=args.interval)
     print("collecting CIKs from frames (us-gaap + ifrs-full, 19 currencies, 2009-2025)...", flush=True)
@@ -78,7 +84,11 @@ def main() -> None:
 
     rows = []
     for i, cik in enumerate(ordered, 1):
-        sub = client.submissions(cik) or {}
+        if args.cached_only:
+            path = client._cache_path(f"/submissions/CIK{int(cik):010d}.json")
+            sub = (client.get_json(f"/submissions/CIK{int(cik):010d}.json") or {}) if path.exists() else {}
+        else:
+            sub = client.submissions(cik) or {}
         address = (sub.get("addresses") or {}).get("business") or {}
         rows.append({
             "cik": cik,
@@ -97,9 +107,9 @@ def main() -> None:
             print(f"  {i:,}/{len(ciks):,} submissions  (network requests {client.requests_made:,})", flush=True)
 
     frame = pd.DataFrame(rows)
-    OUT.parent.mkdir(parents=True, exist_ok=True)
-    frame.to_parquet(OUT, index=False)
-    print(f"wrote {OUT}: {len(frame):,} filers, "
+    args.out.parent.mkdir(parents=True, exist_ok=True)
+    frame.to_parquet(args.out, index=False)
+    print(f"wrote {args.out}: {len(frame):,} filers, "
           f"{(frame['tickers'] != '').sum():,} with a current ticker", flush=True)
 
 

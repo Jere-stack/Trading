@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 from datetime import datetime
 from pathlib import Path
 
@@ -45,7 +46,7 @@ from tradelab.research.ledger import ResearchLedger
 from tradelab.research.rank_backtest import perf_stats, run_ranked
 from tradelab.research.validation import expected_max_sharpe
 
-CLEAN = Path("data/signals/clean")
+CLEAN = Path(os.environ.get("N13_CLEAN_DIR", "data/signals/clean"))
 POOL, MIN_DV, LIQ, LOOKBACK = 100, 2_000_000, 60, 252
 N_HOLD, BAND, COST = 20, 10, 33.1
 PERMUTATIONS = 200
@@ -307,7 +308,10 @@ def main() -> None:
 
     rule("GATES 5-6  --  vs the size-matched baseline in both halves, and Sharpe vs SPY")
     n13 = res["N13 (top 20 by composite)"].equity
-    base = res["Size-matched baseline (20 largest eligible)"].equity
+    # Aligned explicitly: both books start from the same eligibility mask, so the
+    # dates should match, but a boolean mask built on one index must not be
+    # applied to another on the strength of "should".
+    base = res["Size-matched baseline (20 largest eligible)"].equity.reindex(n13.index).ffill()
     halves = [("first half", n13.index < SPLIT), ("second half", n13.index >= SPLIT)]
     g5 = True
     for label, m in halves:

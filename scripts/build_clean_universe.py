@@ -124,9 +124,16 @@ def filing_window(client: SecClient, cik: int) -> tuple[pd.Timestamp | None, pd.
 
 
 def main() -> None:
-    if not REGISTRY.exists():
+    import argparse
+
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--registry", type=Path, default=REGISTRY)
+    parser.add_argument("--out", type=Path, default=OUT)
+    args = parser.parse_args()
+    out_dir = args.out
+    if not args.registry.exists():
         raise SystemExit("run scripts/sec_registry_scan.py first")
-    reg = pd.read_parquet(REGISTRY)
+    reg = pd.read_parquet(args.registry)
     by_ticker, names, token_index = registry_index(reg)
     client = SecClient()
 
@@ -152,6 +159,18 @@ def main() -> None:
 
     print(f"  candidate symbols (ever top 200 by raw dollar volume): {len(targets)}")
     print(f"  identification: {targets['method'].value_counts().to_dict()}")
+
+    # A count says how many were matched, not whether they were matched RIGHT.
+    # A random sample of name-only matches is printed for audit by eye, with a
+    # fixed seed so the same sample reappears on a re-run.
+    sec_name = reg.set_index("cik")["name"]
+    by_name = targets[targets["method"] == "name"]
+    if len(by_name):
+        sample = by_name.sample(min(15, len(by_name)), random_state=7)
+        print("\n  audit sample of NAME matches (vendor name -> SEC registrant):")
+        for r in sample.itertuples():
+            print(f"    {r.symbol:<9}{'D' if r.delisted else 'L'} {str(r.name)[:32]:<33}-> "
+                  f"{str(sec_name.get(r.cik, '?'))[:34]:<35}{r.similarity:.2f}")
 
     # ------------------------------------------------ price-registry consistency
     ok = targets[targets["cik"].notna()].copy()
@@ -180,12 +199,12 @@ def main() -> None:
         "high": highs[keep_cols],
         "low": lows[keep_cols],
     }
-    OUT.mkdir(parents=True, exist_ok=True)
+    out_dir.mkdir(parents=True, exist_ok=True)
     for key, frame in clean.items():
-        frame.to_parquet(OUT / f"{key}.parquet")
-    targets.to_csv(OUT / "identification.csv", index=False)
+        frame.to_parquet(out_dir / f"{key}.parquet")
+    targets.to_csv(out_dir / "identification.csv", index=False)
     pd.Series({s: int(c) for s, c in zip(ok["symbol"], ok["cik"], strict=False) if s in keep_cols},
-              name="cik").to_csv(OUT / "symbol_cik.csv", header=True)
+              name="cik").to_csv(out_dir / "symbol_cik.csv", header=True)
 
     # ------------------------------------------------ gate-0 re-audit
     print("\n" + "-" * 88)

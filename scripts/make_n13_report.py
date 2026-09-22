@@ -16,12 +16,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
-CLEAN = Path("data/signals/clean")
+CLEAN = Path(os.environ.get("N13_CLEAN_DIR", "data/signals/clean"))
 SHOW = {
     "N13 (top 20 by composite)": "N13 strategy",
     "S&P 500 (SPY)": "S&P 500",

@@ -111,8 +111,12 @@ class SecClient:
     user_agent: str = field(
         default_factory=lambda: os.environ.get("SEC_USER_AGENT", DEFAULT_USER_AGENT)
     )
-    min_interval: float = 0.13
-    """Seconds between requests: ~7.7/s, under the SEC's 10/s ceiling."""
+    min_interval: float = field(
+        default_factory=lambda: float(os.environ.get("SEC_MIN_INTERVAL", "0.13"))
+    )
+    """Seconds between requests: ~7.7/s, under the SEC's 10/s ceiling. Raise it
+    (SEC_MIN_INTERVAL) for any process that runs alongside another client, so
+    their SUM stays under the ceiling."""
     max_retries: int = 5
     _last: float = field(default=0.0, repr=False)
     requests_made: int = field(default=0, repr=False)
