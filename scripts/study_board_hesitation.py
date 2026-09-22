@@ -94,7 +94,7 @@ def main() -> None:
             marker = "  <- most positive"
         print(f"   {int(row['lag_months']):>5}{int(row['n']):>6}{row['correlation']:>9.3f}{marker}")
 
-    strongest = profile.iloc[profile["correlation"].abs().idxmax()]
+    strongest = profile.loc[profile["correlation"].abs().idxmax()]
     lag = int(strongest["lag_months"])
     print(f"\n   strongest |correlation| at lag {lag:+d} months: {strongest['correlation']:+.3f}")
     if lag <= 0:

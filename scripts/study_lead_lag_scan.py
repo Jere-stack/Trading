@@ -152,9 +152,9 @@ def main() -> None:
         if profile.empty:
             print(f"  {name:<28}{'no overlap':>10}")
             continue
-        peak = profile.iloc[profile["correlation"].abs().idxmax()]
+        peak = profile.loc[profile["correlation"].abs().idxmax()]
         positive = profile[profile["lag_months"] > 0]
-        best_positive = positive.iloc[positive["correlation"].abs().idxmax()]
+        best_positive = positive.loc[positive["correlation"].abs().idxmax()]
         advances = peak["lag_months"] > 0 and abs(peak["correlation"]) >= MIN_PEAK
         if advances:
             survivors.append((name, series, float(peak["lag_months"])))
