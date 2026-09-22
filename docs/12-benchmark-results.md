@@ -911,3 +911,125 @@ No backtest. No portfolio. One session. That is what pre-registering the test
 the one that can.
 
 **Fifteen hypotheses tested. Zero survivors. 322 configurations.**
+
+---
+
+# Round 8: searching outside the box
+
+Fifteen hypotheses, all built from prices and volume, all dead. This round
+changed what was searched rather than searching harder: new data sources, new
+strategy families, the most popular GitHub projects, and — most useful — a free
+academic dataset that answers "what still works after publication" directly.
+
+## What the search eliminated, cheaply
+
+| Candidate | Verdict | Why |
+|---|---|---|
+| **LLM trading agents** — [TradingAgents](https://github.com/TauricResearch/TradingAgents) (~108k ★), [ai-hedge-fund](https://github.com/virattt/ai-hedge-fund) (~59k ★) | ✗ | Stars are not returns. [FINSABER](https://arxiv.org/abs/2505.07078) (KDD 2026): LLM advantages "deteriorate significantly" over 20 years and 100+ symbols — too conservative in bull markets, too aggressive in bear. And any LLM backtest inside the model's training window is contaminated: GPT-4o recalls S&P 500 closes within 1%. |
+| **Congress-trading ETFs** (NANC, KRUZ) | ✗ | NANC +7 pts vs S&P 500 since 2023, KRUZ −8. Explained by sector tilt (tech vs energy); neither beats the market risk-adjusted. |
+| **Lazy Prices** (10-K text changes) | ✗ | A [replication on the S&P 100](https://github.com/iqueipopg/lazy-prices), 2009–2026: alpha −0.93%, t −0.49, **deflated Sharpe 0.13** across 54 variants. |
+| **Insider purchases** (Form 4) | ? | Original: +82 bps/month for opportunistic buys. Recent studies are mixed; one finds no timing premium surviving a placebo. Free data; not tested. |
+| **Dividend month premium** | ? | JFE 2013, replicated in Germany, **not** in Japan; a Nordic thesis finds foreign ownership weakens it. Data on disk; not tested. |
+
+## M4 — which published factors survive publication?
+
+[Jensen, Kelly & Pedersen](https://onlinelibrary.wiley.com/doi/full/10.1111/jofi.13249)
+(*Journal of Finance*, 2023) catalogue 153 US anomalies in 13 themes and
+publish the returns [free](https://jkpfactors.com/data), through December 2025.
+**Returns earned after a factor's publication year are returns its authors
+could not have fitted** — an out-of-sample test run by the passage of time.
+
+**Decay.** Post-publication premium averages +1.54%/yr against +4.05%
+in-sample: **38% survives**, close to McLean–Pontiff's ~42%. 79% of factors stay
+positive. Shrunk to a third, not dead.
+
+**Individual factors in the last decade are noise.** 2015–2025: 5 factors at
+t ≥ 2 long-short, 4 in the bias-free long leg — against ~3.5 by chance.
+
+### A construction bias I nearly reported as signal
+
+The first pass showed 126 of 153 long legs beating the market, 16 at t ≥ 2.
+That is **not** evidence. The check that caught it: do the *short* legs also
+beat the market? They don't (−0.16%) — but in 2015–2025 the *average* of each
+factor's three terciles beat the market by **+0.42%/yr**, and even the
+**middle** tercile beat it 76% of the time. JKP's tercile portfolios carry an
+offset against their own market series.
+
+The corrected measure differences each long tercile against its own factor's
+tercile average, which cancels the offset exactly. **The count falls from 16 to
+4.**
+
+### At the theme level, three survive every lens
+
+`long*` is the bias-free long leg — the part a long-only book can capture.
+
+| Theme | ls post-pub | ls 2015–25 | long* 2015–25 | factors positive | mega-cap 2015–25 |
+|---|---|---|---|---|---|
+| **Momentum** | +2.85% | +3.55% | **+1.53%** | 88% | +2.42% |
+| **Quality** | +2.47% | +2.51% | **+1.22%** | 82% | +2.41% |
+| **Profitability** | +2.35% | +2.44% | **+1.08%** | 91% | +1.14% |
+| Value | +2.74% | +1.36% | +0.78% | 78% | **−0.85%** |
+| Low Risk | +0.42% | +0.45% | **−0.03%** | 56% | +0.76% |
+| Seasonality | −0.09% | −0.26% | **−0.12%** | 33% | +0.04% |
+| Size | +0.07% | −1.43% | **−0.77%** | 20% | +1.69% |
+
+### The most reassuring number in the round
+
+The themes this project tested and rejected **on its own** are exactly the
+ones JKP's data shows dead or weak for a long-only book: Low Risk (N5, N6) at
+−0.03%, Seasonality −0.12%, Size −0.77%, Short-Term Reversal +0.25%. And price
+momentum — rejected here on variance with 17 of 25 cells positive — sits in the
+theme JKP finds strongest.
+
+**Two independent pipelines on different data agree.** The infrastructure is
+not why fifteen hypotheses died.
+
+### Realism
+
++1.1% to +1.5%/yr is the **gross**, theme-level premium for portfolios of
+hundreds of stocks. A 20–30 stock book captures it with far more noise. This is
+a modest edge, and anything built on it should be expected to struggle against
+the deflation bar on a 14-year sample.
+
+## A correction to the standing recommendation
+
+Quality and Profitability need company fundamentals, which this project had
+deferred on cost grounds — EODHD fundamentals at ~€60/month, 7.2% of a €10k
+account. **That objection was wrong.** The SEC serves XBRL fundamentals free
+at `data.sec.gov`: verified reachable, 503 us-gaap tags for Apple back to 2007,
+every row carrying its **filing date** so point-in-time reconstruction is
+possible. The real cost is engineering — tag names change (Apple's revenue tag
+switched in 2018 when the ASC 606 revenue standard took effect) and delisted
+tickers need mapping to SEC CIK numbers — not money.
+
+## A Finnish structural point
+
+An **osakesäästötili** (equity savings account, €100k deposit limit since 2024)
+defers all tax on trades and dividends until withdrawal — and **cannot hold
+ETFs, only individual listed stocks, including foreign ones**. So for a Finnish
+investor, an active stock strategy belongs *inside* one: every rebalance in an
+ordinary taxable account crystallises capital gains tax. For passive exposure
+an accumulating UCITS ETF already defers tax, so the account matters most for
+exactly the kind of strategy M4 points to. Two costs: foreign dividend
+withholding can't be credited inside the account (small for low-yield
+mega-caps), and Finnish providers offer no public trading API, so rebalancing
+would be manual — ~10–20 orders a quarter at the turnover these strategies run.
+
+## N13 — pre-registered, not built
+
+**Quality + Profitability + Momentum, long-only, top 100 by dollar volume,
+from free SEC fundamentals.** Components fixed at 1/3 each and not tuned.
+Nine kill criteria are locked in the ledger before a single fundamental is
+downloaded, including:
+
+- a **data audit** — delisted-firm CIK coverage within 6 points of survivors,
+  or the test does not run;
+- the fundamentals must add value **after neutralising momentum** — otherwise
+  it is N7 again;
+- it must beat a **size-matched naive book** (the 20 largest names), not merely
+  SPY — M3 showed concentration alone beats SPY.
+
+**Prior: higher than any of the fifteen before it, and still low in absolute
+terms.**
+
+**Fifteen hypotheses tested. Zero survivors. 475 configurations.**
