@@ -235,3 +235,42 @@ class TestSeededLedger:
         rows = {r.hypothesis_id: r for r in committed.hypotheses()}
         assert rows["N1-cash-merger-arbitrage"].verdict == "rejected"
         assert rows["N1-cash-merger-arbitrage"].trials >= 25
+
+
+class TestMetricTypeRoundTrip:
+    """An integer metric must not brick the chain.
+
+    `from_dict` coerces metrics to float on read. When `append` stored the
+    caller's literal instead, an int was hashed as `8` and read back as `8.0`,
+    so the entry failed its own verification -- and because appending to a
+    broken chain is refused, the ledger became permanently unwritable. Found
+    by recording `positive_years=8` for N7, which bricked the real ledger.
+    """
+
+    def test_integer_metric_survives_verification(self, tmp_path):
+        ledger = ResearchLedger(tmp_path / "l.jsonl", author="test")
+        ledger.record_hypothesis("H1", statement="s", rationale="r")
+        ledger.record_trial("H1", summary="t", metrics={"positive_years": 8})
+        assert ledger.verify() == 2
+
+    def test_integer_metric_is_stored_as_float(self, tmp_path):
+        ledger = ResearchLedger(tmp_path / "l.jsonl", author="test")
+        ledger.record_hypothesis("H1", statement="s", rationale="r")
+        entry = ledger.record_trial("H1", summary="t", metrics={"n": 3})
+        assert isinstance(entry.metrics["n"], float)
+
+    def test_chain_stays_appendable_after_an_integer_metric(self, tmp_path):
+        """The failure mode was not one bad entry; it was every later write."""
+        ledger = ResearchLedger(tmp_path / "l.jsonl", author="test")
+        ledger.record_hypothesis("H1", statement="s", rationale="r")
+        ledger.record_trial("H1", summary="t", metrics={"wins": 2, "rate": 0.5})
+        ledger.record_verdict("H1", "rejected", reason="because")
+        assert ledger.verify() == 3
+
+    def test_bool_metric_does_not_round_trip_as_true(self, tmp_path):
+        """bool is a subclass of int, so it takes the same path."""
+        ledger = ResearchLedger(tmp_path / "l.jsonl", author="test")
+        ledger.record_hypothesis("H1", statement="s", rationale="r")
+        entry = ledger.record_trial("H1", summary="t", metrics={"passed": True})
+        assert entry.metrics["passed"] == 1.0
+        assert ledger.verify() == 2

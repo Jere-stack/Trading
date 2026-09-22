@@ -632,3 +632,171 @@ three things:
 
 **Fourteen hypotheses tested against real data. Zero survivors. 201
 configurations.**
+
+---
+
+# Round 6: €25,000, and the finding that changes the bar
+
+Two questions, asked together: does raising the account to €25,000 make any of
+the fourteen rejections tradable, and if not, what should be done instead?
+
+## What €25,000 actually fixes
+
+Real improvements, all of them measured rather than assumed:
+
+| | €10,000 | €25,000 |
+|---|---|---|
+| Round-trip cost (20 names) | 40.2 bps | **33.1 bps** |
+| Cash stranded by whole-share rounding | 4.05% | **2.15%** |
+| Positions too small to buy one share | 3.3% | **1.4%** |
+| Research stack as share of capital | 8.70% | **3.48%** |
+
+The commission floor is the mechanism: IBKR Tiered charges
+`max(shares × $0.0035, $0.35)`, and at a €540 position that $0.35 floor binds
+hard. At €1,350 it mostly stops binding.
+
+## What it does not fix
+
+Round 3 rejected N7 momentum and recorded a prediction about exactly this
+question:
+
+> The edge survives to 150bps — so cost is **not** what kills it. That matters:
+> this rejection is about the signal's reliability, not account size, and a
+> larger account would not rescue it.
+
+**The prediction held.** At €25k costs, momentum's headline excess over SPY
+rises from +2.43% to +2.81% — and every number that matters stays where it was:
+
+| | Momentum | SPY |
+|---|---|---|
+| CAGR | 17.68% | 14.87% |
+| Volatility | **39.9%** | 14.4% |
+| Max drawdown | **−44.3%** | −23.9% |
+| Sharpe | **0.44** | 1.03 |
+| Deflation bar at 250 trials | **0.76** | — |
+
+Realised Sharpe **0.44 against a bar of 0.76**: the strategy scores below what
+pure selection noise produces at this trial count. Eight positive years in
+fourteen, median +2.47%, worst year **−41.91%** — which on €25,000 is
+**−€10,478** relative to simply holding the index.
+
+And after the €870/yr research stack, the excess is **−0.67%**. At €25k the
+best of fourteen hypotheses, in its most flattering configuration, loses to
+buying an ETF.
+
+One nuance recorded against the rejection: the parameter surface is **not** a
+fragile optimum — 17 of 25 cells beat SPY. The signal's mean is genuinely
+positive. It is the variance that makes it untradable, which is a more
+permanent objection than overfitting.
+
+## M3 — the universe handicap is concentration, not weighting
+
+Round 3 measured the handicap (−8.66%/yr for a random equal-weighted 20) but
+never separated its two possible causes. SPY is not merely a basket of large
+caps; it is a **cap-weighted** basket, and 2012–2026 was an era of extreme
+mega-cap concentration. So: is the penalty for equal-weighting, or for drawing
+from a wide pool?
+
+**It is not weighting.** Four schemes, 200 random draws each:
+
+| Weighting | vs SPY |
+|---|---|
+| Equal | −7.19% |
+| √(dollar volume) | −7.46% |
+| DV capped at 25% | −7.65% |
+| Dollar volume | **−8.12%** ← worse |
+
+Size-weighting made it *worse*. It did raise the share of draws beating SPY
+(2% → 9%) while lowering the mean — more lottery tickets, not more edge.
+
+**It is concentration.** Narrowing the draw pool collapses the deficit,
+monotonically:
+
+| Draw pool | vs SPY |
+|---|---|
+| Top 500 by DV | −6.87% |
+| Top 100 | −5.78% |
+| Top 50 | −4.74% |
+| Top 30 | −1.26% |
+| **Top 20** | **−0.39%** |
+
+The index's return lived in a handful of names, and a 20-name draw from a wide
+pool almost never held them.
+
+### What this changes
+
+**The alpha bar is a property of the universe.** A signal selecting from 5,000
+names must overcome ~7 points before it is level with the index. The same
+signal selecting within the top 30–50 starts 1–5 points behind. Every one of
+the fourteen rejections was scored against the punishing version.
+
+This does not resurrect them — N7 fails on variance, not on the baseline — but
+it says where the next one should look.
+
+### What it is not
+
+Holding the top 20 by dollar volume returned **18.62%** against SPY's 14.87%,
+at only 16% monthly turnover. That is **not** a validated strategy and is not
+treated as one:
+
+- Sharpe **0.85 against SPY's 1.05** — worse risk-adjusted
+- Volatility 21.9% vs 14.2%, drawdown −40.8% vs −23.9%
+- Halves are **+1.20% then +6.40%** — a concentrated bet on a mega-cap regime
+  that fourteen years cannot distinguish from a permanent effect
+
+And a caveat against the conclusion: dollar volume is a poor proxy for market
+cap, since it also ranks on turnover. A true cap-weighted test would be cleaner
+and is not possible with the current data.
+
+## A bug in the integrity mechanism, found by using it
+
+Recording `positive_years=8` bricked the ledger. `from_dict` coerces metrics to
+`float` on read while `append` stored the caller's literal, so an int hashed as
+`8` and read back as `8.0` — the entry failed its own verification, and because
+appending to a broken chain is refused, the ledger became permanently
+unwritable.
+
+Fixed by coercing on write, with four regression tests. The malformed entry was
+discarded via `git checkout` rather than by truncating the file, so the
+append-only file was never edited in place.
+
+The mechanism worked exactly as designed: it refused to bury a bad entry under
+valid ones. It was simply wrong about the cause.
+
+## N12 — pre-registered, not yet tested
+
+**The institutional accumulation footprint.** An institution taking a position
+large relative to a stock's daily volume cannot do it in one trade; impact
+forces the order to be split across sessions, and participation algorithms do
+this explicitly at 5–20% of each day's volume. Kyle (1985) derives the same
+behaviour from theory.
+
+The prediction is about the **shape** of volume, not its level:
+
+- A news pop is **one** enormous session, then baseline. Attention is spent.
+- An accumulation is volume elevated 20–50% for **ten to twenty consecutive**
+  sessions, with no single dramatic day — because the algorithm is avoiding one.
+
+Both produce the same elevated monthly *average*, which is why turnover, Amihud
+and the volume ratio cannot separate them: averaging destroys the distinction.
+The published volume-return work — Gervais/Kaniel/Mingelgrin's high-volume
+premium, Lee/Swaminathan's turnover-conditioned momentum — is built on the
+level, and the one-day spike this signal discards is much of what drives it.
+
+    footprint = (elevated sessions / window) × (mean close-location on those sessions)
+
+A one-day 8× spike closing on its high scores 1/21 × 1.0 = 0.05. Fifteen
+sessions at 1.3× closing two-thirds up their range score 15/21 × 0.33 = 0.24 —
+five times larger, from a pattern with a far smaller peak. There is a unit test
+asserting exactly that ordering; if it ever fails the hypothesis is void.
+
+**Eight kill criteria are fixed in the ledger before any return was computed**,
+including two placebos (shuffle volume; shuffle direction), a full parameter
+grid, momentum orthogonality, earnings exclusion, and an effective-sample test.
+Per M3 it will be tested **within the top 50–100 by dollar volume**, where the
+baseline is 1–5 points from SPY rather than 7.
+
+**Prior: low.** Fourteen hypotheses, zero survivors. The base rate says this
+dies too, and the value is in killing it cheaply.
+
+**Fourteen hypotheses tested. Zero survivors. 250 configurations.**

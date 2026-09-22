@@ -295,7 +295,13 @@ class ResearchLedger:
             detail=detail or {},
             n_configs=n_configs,
             n_observations=n_observations,
-            metrics=metrics or {},
+            # Coerced on WRITE because `from_dict` coerces on READ. Without
+            # this, a caller passing an int metric -- `positive_years=8` -- is
+            # hashed as `8` and read back as `8.0`, so the entry fails its own
+            # verification and the chain is bricked from that point on. The
+            # write and read paths have to agree on the type or the hash is
+            # not a hash of the content, it is a hash of the caller's literal.
+            metrics={k: float(v) for k, v in (metrics or {}).items()},
             supersedes=supersedes,
             prev_hash=previous,
         )
