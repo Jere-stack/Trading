@@ -31,6 +31,7 @@ re-run makes no requests.
 from __future__ import annotations
 
 import gzip
+import http.client
 import json
 import os
 import re
@@ -159,7 +160,10 @@ class SecClient:
                     time.sleep(2.0 * (2**attempt))
                     continue
                 raise
-            except (urllib.error.URLError, TimeoutError):
+            except (urllib.error.URLError, TimeoutError, OSError, http.client.HTTPException):
+                # A connection the server closes mid-response (RemoteDisconnected,
+                # IncompleteRead) is routine over tens of thousands of requests and
+                # is retried like a timeout. It killed a registry shard on first run.
                 time.sleep(2.0 * (2**attempt))
         raise RuntimeError(f"SEC request failed after {self.max_retries} attempts: {url}")
 

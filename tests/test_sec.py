@@ -99,3 +99,93 @@ class TestClientCache:
     def test_default_user_agent_carries_no_personal_address(self, monkeypatch):
         monkeypatch.delenv("SEC_USER_AGENT", raising=False)
         assert "@" not in SecClient().user_agent
+
+
+class TestRegistryIdentification:
+    """The clean-universe rules: identify against the SEC registry, never guess."""
+
+    @staticmethod
+    def _index():
+        import pandas as pd
+        from scripts.build_clean_universe import registry_index
+
+        reg = pd.DataFrame([
+            {"cik": 1, "name": "APPLE INC", "frame_name": "Apple Inc.", "tickers": "AAPL",
+             "former_names": "APPLE COMPUTER INC"},
+            {"cik": 2, "name": "Capri Holdings Ltd", "frame_name": "Capri Holdings Ltd",
+             "tickers": "CPRI", "former_names": "Michael Kors Holdings Ltd"},
+            {"cik": 3, "name": "NEWCO ABX INC", "frame_name": "NEWCO ABX INC", "tickers": "ABX",
+             "former_names": ""},
+        ])
+        return registry_index(reg)
+
+    @staticmethod
+    def _row(symbol, name, delisted):
+        from types import SimpleNamespace
+
+        from scripts.n13_map_ciks import base_ticker
+
+        return SimpleNamespace(symbol=symbol, ticker=base_ticker(symbol), name=name, delisted=delisted)
+
+    def test_listed_symbol_is_identified_by_current_ticker(self):
+        from scripts.build_clean_universe import identify
+
+        cik, method, _ = identify(self._row("AAPL", "Apple Inc", False), *self._index())
+        assert (cik, method) == (1, "ticker")
+
+    def test_renamed_delisted_firm_is_found_under_its_former_name(self):
+        from scripts.build_clean_universe import identify
+
+        cik, method, _ = identify(self._row("KORS", "Michael Kors Holdings Limited", True), *self._index())
+        assert (cik, method) == (2, "name")
+
+    def test_reissued_ticker_is_not_grafted_onto_a_delisted_symbol(self):
+        """ABX_OLD was Barrick; the current holder of ABX is someone else."""
+        from scripts.build_clean_universe import identify
+
+        cik, method, _ = identify(self._row("ABX_OLD", "Barrick Gold Corporation", True), *self._index())
+        assert cik != 3
+        assert method == "unresolved"
+
+    def test_known_contaminant_is_never_identified(self):
+        from scripts.build_clean_universe import identify
+
+        cik, method, _ = identify(self._row("SBER", "Sberbank of Russia PJSC ADR", True), *self._index())
+        assert (cik, method) == (None, "contaminant")
+
+    def test_code_without_a_real_name_is_a_contaminant(self):
+        from scripts.build_clean_universe import identify
+
+        cik, method, _ = identify(self._row("SQ", "SQ", True), *self._index())
+        assert (cik, method) == (None, "contaminant")
+
+
+class TestClientRetries:
+    def test_dropped_connection_is_retried_not_fatal(self, tmp_path, monkeypatch):
+        import http.client
+        import io
+
+        calls = {"n": 0}
+
+        class Response(io.BytesIO):
+            def __init__(self, data: bytes) -> None:
+                super().__init__(data)
+                self.headers: dict = {}
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+        def flaky(*_a, **_k):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise http.client.RemoteDisconnected("closed without response")
+            return Response(b'{"ok": true}')
+
+        monkeypatch.setattr("urllib.request.urlopen", flaky)
+        monkeypatch.setattr("time.sleep", lambda _s: None)
+        client = SecClient(cache_dir=tmp_path, min_interval=0)
+        assert client.get_json("/submissions/CIK0000000003.json") == {"ok": True}
+        assert calls["n"] == 2
