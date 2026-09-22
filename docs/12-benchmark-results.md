@@ -691,6 +691,11 @@ permanent objection than overfitting.
 
 ## M3 — the universe handicap is concentration, not weighting
 
+> **⚠ Numbers withdrawn in round 9.** The top-20 and top-30 books below held ~4.6
+> unidentifiable securities a month (local-currency foreign listings, codes carrying
+> defunct firms' names). The figures in this section must not be relied on; the
+> qualitative claim is unverified, not refuted. See *Round 9 → M5*.
+
 Round 3 measured the handicap (−8.66%/yr for a random equal-weighted 20) but
 never separated its two possible causes. SPY is not merely a basket of large
 caps; it is a **cap-weighted** basket, and 2012–2026 was an era of extreme
@@ -1033,3 +1038,106 @@ downloaded, including:
 terms.**
 
 **Fifteen hypotheses tested. Zero survivors. 475 configurations.**
+
+---
+
+# Round 9: N13 stopped at the data audit, and what the audit found
+
+N13 — quality + profitability + momentum from free SEC fundamentals — was built
+as far as its first pre-registered gate. It stopped there. **No return was ever
+computed.** What gate 0 exposed matters more than N13 would have.
+
+## The build
+
+- **`tradelab.data.sec`** — a rate-limited, disk-cached client for
+  `data.sec.gov`. It deliberately avoids `www.sec.gov`, which rejects
+  automated requests unless the User-Agent carries a contact email; rather
+  than send the account holder's address to a third party, the client uses a
+  neutral identifier (overridable via `SEC_USER_AGENT`).
+- **Ticker → CIK mapping** built from the SEC `frames` endpoint: 15,767
+  filers, 23,880 historical name spellings, **including companies since
+  delisted** — the current ticker file lists survivors only.
+- **Matching rules fixed in advance.** A ticker match is accepted for a
+  delisted symbol only if the names also agree, because reissued tickers
+  would otherwise graft one firm's accounts onto another's prices.
+
+## Gate 0: two passes, both failed
+
+| | Survivors mapped | Delisted mapped | Gap | Threshold |
+|---|---|---|---|---|
+| First pass | 92.9% | 63.9% | **+29.0** | 6 |
+| Final pass | 96.8% | 71.2% | **+25.6** | 6 |
+
+After the first failure, fixes were **decided before re-running** and
+recorded: apostrophe and word-order handling, all historical SEC names,
+broader candidate search with *unchanged* acceptance thresholds, and a narrow
+fixed rule removing vendor mislabels — applied only to symbols still unmatched,
+so a genuine US company the matcher missed keeps counting against the gate.
+**One re-run was allowed.** It failed. N13 is shelved, not rejected: it was
+never tested.
+
+### Why it failed is the finding
+
+Of 32 delisted symbols still unmatched, only **~7** are genuine US firms lost
+to renames (DowDuPont, Michael Kors → Capri, Overstock → Beyond…). Matching all
+seven would still leave a ~19-point gap. The rest cannot be identified as US
+companies:
+
+- **~13 foreign listings and IFRS filers** — Novatek, Polyus, NLMK, BDO
+  Unibank, UniCredit, JDE Peet's, Boozt…
+- **5 codes with no name at all** — GC, SK, SQ, AIP_OLD, ASPI_OLD
+- **Codes carrying names of firms that ceased to exist before this panel
+  begins** — CompuCom (private 2004), Vintage Petroleum (acquired 2006), Longs
+  Drug Stores (acquired 2008) — yet present in the **2012–2026** top 100 by
+  dollar volume. Stale names on some other security's prices.
+
+A survivorship-clean test must know what the delisted securities *are*. Here a
+quarter of them cannot be identified, so no matcher could pass this gate. The
+stop is correct on the merits, not just on procedure.
+
+## M5 — the contamination reached earlier results
+
+| | Unidentifiable securities |
+|---|---|
+| Top 100 by dollar volume | **11.8** per month (max 23) |
+| Top 20 by dollar volume | **4.62** per month, in **168 of 169** months |
+
+Sberbank — a Moscow listing priced in roubles — sat in the "US top 20" for
+**103 months**. "Hampton Industries" 72, "Longs Drug Stores" 67, "Vintage
+Petroleum" 44. (Some unmatched names — Alibaba, TSMC, ASML — are genuine
+US-listed foreign issuers and do belong.) Local-currency prices inflate dollar
+volume, so these securities concentrate exactly at the top of a dollar-volume
+ranking.
+
+**Consequences:**
+
+- **M3's numbers are withdrawn.** About a quarter of its top-20 book was
+  unidentifiable, and the sign of the effect cannot be determined. The
+  qualitative claim is unverified, not refuted.
+- **N12's verdict stands.** Its universe carried ~12% noise, but the rejection
+  rests on the real signal scoring 2.82 sd *below* its own shuffled null, which
+  12% noise cannot explain.
+- **M4 is unaffected** — it uses JKP's CRSP/Compustat-based data, not this
+  universe.
+
+### The general lesson
+
+Round 2 fixed a version of this (TMB Bank at $24,100 outranking Microsoft)
+with a metadata filter. The filter trusted the same vendor labels that are
+wrong — EODHD marks Kuwaiti and Russian securities "NYSE / USD / Common
+Stock" — so the defect survived. **A filter built on a vendor's own metadata
+cannot catch that vendor's metadata errors.** An external registry, the SEC,
+is what exposed it.
+
+## What would unblock N13
+
+A survivorship-free security master with historical index membership. The
+standard retail option,
+[Norgate Data](https://norgatedata.com/stockmarketpackages.php), includes
+delisted US stocks and historical S&P 500 constituents at **US$787.50/year**
+(US$433 for six months). As a *recurring* cost that is ~2.9% of €25,000 — larger
+than the edge it would test. As a *one-off* six-month research subscription it
+would answer whether N13 survives, after which it could be cancelled.
+
+**Fifteen hypotheses tested, zero survivors; N13 shelved at the data audit.
+476 configurations.**
