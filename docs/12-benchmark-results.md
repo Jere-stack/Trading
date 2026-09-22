@@ -800,3 +800,114 @@ baseline is 1–5 points from SPY rather than 7.
 dies too, and the value is in killing it cheaply.
 
 **Fourteen hypotheses tested. Zero survivors. 250 configurations.**
+
+---
+
+# Round 7: N12 run as a research team would run it
+
+The hypothesis and its eight kill criteria were fixed in the ledger before any
+return existed. This round executed them in order and stopped at the first
+kill — then performed an autopsy, which is a different activity and is labelled
+as one.
+
+## Dead at gate B, the first gate that could kill it
+
+No backtest was run. No portfolio was constructed. The information coefficient
+— does the signal rank next month's returns at all — is far cheaper than a
+backtest and much harder to fool, so it goes first.
+
+| | |
+|---|---|
+| Information coefficient | **+0.0029** |
+| t-statistic on effective sample | **+0.23** |
+| Effective observations | 118.3 of 167 |
+| Hit rate | **49%** |
+
+A coin flip. The pre-registered bar was \|t\| ≥ 2.
+
+## The autopsy, with the null written down first
+
+One parameterisation is one observation, so criterion 3 varies all four
+parameters — 48 cells. **The expected result under the null was recorded
+before the run:** ~2.2 cells above \|t\| = 2 if independent, expected maximum
+\|t\| around 2.0–2.3, and reviving the hypothesis would need a *coherent region*
+at \|t\| ≥ 3.5.
+
+| | |
+|---|---|
+| Cells evaluated | 48 |
+| Positive IC | 26 (54%) |
+| Cells above \|t\| = 2 | **2** |
+| Strongest cell | **\|t\| = 2.08** |
+
+Exactly the null. And both "significant" cells carry the **wrong sign** at a
+10-day window — that is short-term reversal, a known effect, not accumulation.
+
+## The decisive result: worse than random
+
+Fifty volume shuffles, building an empirical null rather than trusting a
+standard error:
+
+| | |
+|---|---|
+| Real IC | +0.0029 |
+| **Null mean** | **+0.0217** |
+| Real, in null standard deviations | **−2.82** |
+| Empirical p | **1.000** |
+
+**A randomly shuffled volume series produces a better signal than the real
+one.** The mechanism is clear in hindsight: shuffling makes the elevated-day
+set effectively random, so the placebo degenerates into a noisy mean
+close-location — and mean close-location carries *more* information than
+close-location conditioned on high volume.
+
+Conditioning on elevated volume does not merely fail to add. **It destroys
+information that was already there.** The hypothesis is refuted in its own
+terms, not merely unsupported.
+
+The component decomposition agrees: persistence alone — the novel part — scores
+**t +0.27**. Elevated-day volume share scores **t −0.21**.
+
+## A by-product, and why it is not a finding
+
+Mean close-location value over 21 sessions scores IC **+0.0309**, sitting 3.63
+standard deviations above a cross-sectional permutation null (empirical
+p = 0.020, the floor 50 draws can resolve).
+
+It is recorded as an observation and **not** as a result:
+
+1. **Post-hoc** — it emerged from the autopsy of a failed hypothesis, after 72
+   configurations this round and 322 in the project.
+2. **Not novel** — this is the Accumulation/Distribution and Chaikin Money Flow
+   family, 1980s technical analysis.
+3. **Weak** — an IC of 0.03 is marginal once costs and breadth are accounted.
+4. **Untested** — it has faced none of the gates. N7 momentum also had a
+   genuinely positive mean and died on variance.
+
+## A defect found in my own test design
+
+This generalises beyond N12 and is the most reusable thing the round produced.
+
+**A within-stock time shuffle preserves each stock's long-run mean.** A name
+that habitually settles near its highs still does after shuffling. For any
+signal that is a *trailing average*, that placebo destroys only the timing and
+leaves the level — so it tests far less than it appears to, and it will flatter
+the signal.
+
+The evidence was unmissable once looked at: two of three such shuffles
+reproduced the close-location result at **t +2.01 and +2.61**, against a real
+t of +2.74. A statistic whose null produces 2.61 cannot support a claim at 2.74.
+
+The correct null for a cross-sectional characteristic is a **cross-sectional
+permutation** — keep every series intact, permute which stock's signal maps to
+which stock's forward return. Both nulls are now implemented in
+`tradelab.research.ic`, and every future hypothesis is tested against the
+appropriate one.
+
+## What the round cost
+
+No backtest. No portfolio. One session. That is what pre-registering the test
+*order* buys: the gate most likely to kill runs first, and the cheapest gate is
+the one that can.
+
+**Fifteen hypotheses tested. Zero survivors. 322 configurations.**
