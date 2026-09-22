@@ -492,3 +492,143 @@ hypothesis costs an afternoon instead of a week — and the trial count rises by
 3 instead of 30.
 
 **Thirteen hypotheses tested against real data. Zero survivors.**
+
+---
+
+# Round 5: a pre-registered scan, and a lesson about out-of-sample testing
+
+Round 4 killed one signal on a lead-lag gate. That raised a sharper question
+than the signal itself: **is there *any* cheaply-computable market-state
+measure that leads the index?** Round 5 answers it properly instead of
+guessing — a scan with the candidate list, the controls, the split, and the
+kill criteria all fixed before a single correlation was computed.
+
+## The design
+
+**Twelve candidates**, declared up front, computed from OHLCV alone — nothing
+licensed, nothing that costs €60/month:
+
+| Novel constructions | Published controls |
+|---|---|
+| `clv_breadth` — where the close sits in the day's range, averaged | `new_low_breadth` — fraction near a 52-week low |
+| `return_dispersion` — cross-sectional spread of daily returns | `avg_correlation` — index vol ÷ mean single-stock vol |
+| `return_skew` — cross-sectional third moment | `illiquidity` — aggregate Amihud |
+| `range_expansion` — today's range vs its trailing norm | |
+| `gap_breadth` — fraction gapping outside the prior range | |
+| `volume_concentration` — Herfindahl of dollar volume | |
+| `listing_rate` / `delisting_rate` — universe entries and exits | |
+| `reversal_breadth` — fraction closing against the open | |
+
+The three controls are the point of the design. A scan that finds nothing
+might mean *nothing leads the market*, or it might mean *the pipeline is
+broken*. Controls separate those two. A scan that finds something might mean
+a discovery — or that the pipeline manufactures correlations. Controls
+separate those too.
+
+**Discovery on 2011–2018. Confirmation on 2019–2026.** Disjoint. The lag was
+chosen in the first half and tested, unchanged, in the second.
+
+## Discovery found five. Out of sample killed three.
+
+| Candidate | Lag | In-sample | Out-of-sample | Holds? |
+|---|---|---|---|---|
+| `clv_breadth` | +8 | **+0.302** | −0.012 | no |
+| `return_skew` | +12 | **−0.299** | −0.038 | no |
+| `delisting_rate` | +11 | **−0.215** | +0.099 | no — sign flip |
+| `listing_rate` | +11 | −0.240 | −0.205 | yes |
+| `avg_correlation` *[control]* | +5 | −0.382 | −0.390 | yes |
+
+Seven of twelve never passed discovery. Of the five that did, **three
+collapsed or reversed out of sample** — and all three were novel
+constructions. `clv_breadth` at +0.302 over eight years looked like a real
+finding. It was worth −0.012 on data it had not seen.
+
+The two survivors then went to stress testing.
+
+## `listing_rate` — dead on arithmetic, not on data
+
+The series is a 90-day rolling count. Rolling counts are overlapping, so
+consecutive monthly readings are nearly the same number: **lag-1
+autocorrelation 0.973.**
+
+    n_eff = n(1−r)/(1+r) = 177 × 0.027 / 1.973 = 2.4
+
+**177 monthly observations carry 2.4 independent ones.** The standard error
+on a correlation at that sample size is ±1.000 — the entire admissible range.
+The claimed −0.177 sits 0.2 SE from zero. It replicated out of sample because
+a near-constant series replicates itself, not because anything is there.
+
+## `avg_correlation` — survived three attacks, died on the fourth
+
+This one was interesting enough to be worth attacking properly, and the first
+three attacks all failed to kill it:
+
+| Attack | Result | Verdict |
+|---|---|---|
+| **Persistence** — is the "lead" just the signal tracking the market? | lag 0 only −0.107 against −0.361 at +5 | survives |
+| **Mirror lag** — is it symmetric, i.e. no direction? | −5 reads **+0.120**, asymmetry 0.241 | survives |
+| **Effective sample** — enough independent observations? | n_eff 62.1, the reading sits 2.8 SE out | survives |
+| **Estimation window** — does it exist at only one parameter? | see below | **dead** |
+
+`average_correlation` is computed over a rolling window. The window was set to
+60 days at the start and never varied. Varying it:
+
+| Window | Corr at +5 | Peak lag | Peak corr |
+|---|---|---|---|
+| 20 | −0.03 | +8 | −0.120 |
+| 40 | −0.02 | +6 | −0.164 |
+| **60** | **−0.36** | **+5** | **−0.361** |
+| 90 | −0.08 | +8 | **+0.257** |
+| 120 | +0.10 | +9 | **+0.255** |
+
+The −0.36 exists at one window and nowhere else. Two windows away in either
+direction it is worth −0.02, and at the long end the peak **flips sign**. The
+peak lag wanders +8, +6, +5, +8, +9 with no stable structure. There is no
+economic story for an effect specific to five months of lag measured over
+exactly sixty days of correlation — and a real effect does not vanish because
+you measured its input over a slightly different window.
+
+This trips a kill criterion written down in round 3, before this hypothesis
+existed: **the effect exists only at one parameter value.**
+
+## The lesson, which is the actual output of this round
+
+> **Out-of-sample replication does not protect against a parameter artefact
+> when the same parameter is used in both halves.**
+
+The OOS test validated the **lag**, which had been chosen in-sample. It could
+not validate the **window**, because the window was fixed at 60 days in both
+halves. Both halves faithfully replicated the same artefact — and the
+replication read as confirmation.
+
+What eventually prompted the check was not a statistic. It was the *shape* of
+the lead-lag profile: a narrow spike at +5 rather than a hump spanning
+adjacent lags. Real economic effects are smooth in their parameters. Spikes
+are fits.
+
+## The multiple-testing arithmetic, which says the same thing
+
+Discovery examined **12 candidates × 25 lags = 300 correlations.** A 2.8-SE
+reading has p ≈ 0.005 two-tailed. Chance alone therefore delivers
+
+    300 × 0.005 = 1.5 findings
+
+The scan found exactly **one**. That is not a near-miss discovery; it is the
+expected yield of a lottery with 300 tickets, and it would have been suspect
+even if the window test had come back clean.
+
+## What round 5 cost and what it bought
+
+Seventeen configurations. No backtest, no strategy, no capital. It bought
+three things:
+
+1. A **direct answer** to "does any free market-state measure lead the S&P?"
+   Across twelve candidates and twenty-five lags: **no.**
+2. Confirmation the pipeline is sound — the controls behaved exactly as
+   published work says they should, so the null results are real nulls.
+3. A methodological hole found and closed: **every parameter that is not
+   varied across the split is untested by the split.** Future hypotheses vary
+   estimation windows before, not after, out-of-sample confirmation.
+
+**Fourteen hypotheses tested against real data. Zero survivors. 201
+configurations.**

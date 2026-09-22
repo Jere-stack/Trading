@@ -28,7 +28,6 @@ import math
 from datetime import UTC, datetime
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
 
 from tradelab.research.board_hesitation import lead_lag_profile
