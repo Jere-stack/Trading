@@ -80,18 +80,20 @@ class BreadthSeries:
         Only prior years are used, so the adjustment is point-in-time.
         """
         frame = pd.DataFrame({"raw": self.raw})
-        frame["week"] = frame.index.isocalendar().week.to_numpy()
+        iso = frame.index.isocalendar()
+        frame["week"] = iso.week.to_numpy()
         frame["year"] = frame.index.year
-        out = pd.Series(np.nan, index=frame.index, dtype=float)
-        for _week, group in frame.groupby("week"):
-            ordered = group.sort_index()
-            for stamp, row in ordered.iterrows():
-                prior = ordered[
-                    (ordered["year"] < row["year"]) & (ordered["year"] >= row["year"] - years)
-                ]
-                if prior["year"].nunique() >= years:
-                    out.loc[stamp] = row["raw"] - float(prior["raw"].mean())
-        return out
+
+        # Pivot to year x week, take each cell's mean, then average the SAME
+        # week across the previous `years` rows. Shifting by one year keeps it
+        # point-in-time: a date never contributes to its own baseline.
+        cells = frame.groupby(["year", "week"])["raw"].mean().unstack()
+        baseline = cells.rolling(years, min_periods=years).mean().shift(1)
+
+        lookup = baseline.stack(future_stack=True)
+        keys = pd.MultiIndex.from_arrays([frame["year"], frame["week"]])
+        reference = pd.Series(lookup.reindex(keys).to_numpy(), index=frame.index)
+        return (frame["raw"] - reference).rename("bhb_adjusted")
 
     def percentile(self, window_years: int = 5) -> pd.Series:
         """Seasonally adjusted breadth as a percentile of its own trailing window.

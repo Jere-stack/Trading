@@ -419,3 +419,76 @@ The two remaining honest moves are unchanged and now better evidenced:
 2. **Hold the index and keep the search running at zero incremental cost.**
    The infrastructure is built; each future test costs nothing but a rising
    deflation bar.
+
+---
+
+# Round 4: an original signal, and how fast it died
+
+**N10 — Board Hesitation Breadth.** The fraction of US dividend payers
+currently overdue against *their own* historical declaration cadence, as a
+market-timing signal.
+
+The construction was genuinely unpublished as far as two targeted searches
+could establish — market-breadth literature is entirely advance/decline
+(price), aggregate-dividend literature is entirely dividend-price ratios
+(valuation), and neither counts boards deviating from their own rhythm. The
+*firm-level* link is published ([Economics Letters
+2016](https://www.sciencedirect.com/science/article/abs/pii/S016517651630266X):
+longer intervals between announcements predict cuts) and was never claimed.
+
+The series looked right. Mean 6.30%, and the two highest readings in twenty
+years were **2009 (7.74%)** and **2020 (12.37%)** — boards visibly hesitating
+in both crises.
+
+It was dead in three checks, with no backtest run.
+
+## 1. The lead-lag gate — the premise is backwards
+
+| Lag (months) | Correlation with SPY |
+|---|---|
+| **−6** | **−0.099** ← strongest |
+| −1 | +0.033 |
+| 0 | +0.016 |
+| +7 | +0.093 |
+
+**The signal follows the market by six months.** A board in mid-2009 delays
+because it has just watched its order book collapse — information already in
+the price. The best positive-lag reading (+7 months) has the **wrong sign**:
+high hesitation associated with *high* forward returns.
+
+The lesson generalises beyond this idea: **aggregate private information at
+board level does not lead the market at monthly frequency. It trails it.**
+
+## 2. The placebo beats the real signal
+
+| | Peak abs. correlation |
+|---|---|
+| Real signal | 0.099 |
+| **Shuffled declaration dates** | **0.132** |
+
+Permuting declaration dates *within each firm* — preserving every firm's
+declaration count and the overall date distribution, destroying only the
+ordering — produces a *stronger* relationship. The construct carries no
+information whatsoever; the weak correlation is calendar and universe
+composition.
+
+## 3. Coverage is severely survivorship-biased
+
+| Declaration-date coverage | Firms | Later stopped paying |
+|---|---|---|
+| < 50% | 1,574 | **92.5%** |
+| ≥ 50% | 4,241 | 46.4% |
+
+**A 46-point gap.** EODHD holds declaration dates precisely for the firms that
+survived. The eligible universe therefore systematically excludes the firms
+most likely to hesitate — the measure is computed on a survivor-tilted subset
+and would have been biased *even if the mechanism had been real*.
+
+## What this round cost, and what it bought
+
+Three cheap checks. No backtest. That is what pre-registering the **test
+order** buys: the gate most likely to kill the idea runs first, so a dead
+hypothesis costs an afternoon instead of a week — and the trial count rises by
+3 instead of 30.
+
+**Thirteen hypotheses tested against real data. Zero survivors.**
