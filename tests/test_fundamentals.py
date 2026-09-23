@@ -10,7 +10,7 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from tradelab.research.fundamentals import annual_ratio_rows, as_of
+from tradelab.research.fundamentals import annual_ratio_rows, as_of, with_predecessors
 
 
 def _fact(start, end, val, filed, accn, form="10-K"):
@@ -107,3 +107,49 @@ class TestPointInTime:
 
     def test_empty_history_is_nan(self):
         assert pd.isna(as_of(pd.DataFrame(), pd.Timestamp("2021-01-01"), "profitability"))
+
+
+class TestSparseFilers:
+    def test_filer_with_only_quarterly_rows_is_empty_not_an_error(self):
+        """Found by the smoke run: a balance sheet exists, no annual report does."""
+        facts = _facts({
+            ("us-gaap", "Assets"): [_fact(None, "2021-03-31", 100.0, "2021-05-10", "Q1", form="10-Q")],
+            ("us-gaap", "OperatingIncomeLoss"): [
+                _fact("2021-01-01", "2021-03-31", 5.0, "2021-05-10", "Q1", form="10-Q")],
+        })
+        result = annual_ratio_rows(facts)
+        assert result.unit == "USD"
+        assert result.frame.empty
+
+
+class TestPredecessors:
+    """A reorganised company keeps its history; the successor's own reports win once filed."""
+
+    def _rows(self, filed, gp, accn):
+        return annual_ratio_rows(_company(filed=filed, gp=gp, accn=accn)).frame
+
+    def test_successor_without_reports_uses_predecessor_history(self):
+        old = self._rows("2019-02-20", 30.0, "P1")
+        merged = with_predecessors({1: old}, {2: 1})
+        assert as_of(merged[2], pd.Timestamp("2019-06-30"), "profitability") == pytest.approx(0.30)
+
+    def test_successor_report_takes_over_once_filed(self):
+        old = annual_ratio_rows(_facts({
+            ("us-gaap", "GrossProfit"): [_fact("2019-01-01", "2019-12-31", 30.0, "2020-02-20", "P1")],
+            ("us-gaap", "Assets"): [_fact(None, "2019-12-31", 100.0, "2020-02-20", "P1")],
+        })).frame
+        new = self._rows("2021-02-20", 50.0, "S1")
+        merged = with_predecessors({1: old, 2: new}, {2: 1})
+        assert as_of(merged[2], pd.Timestamp("2020-06-30"), "profitability") == pytest.approx(0.30)
+        assert as_of(merged[2], pd.Timestamp("2021-03-01"), "profitability") == pytest.approx(0.50)
+
+    def test_chains_are_followed_and_cycles_do_not_hang(self):
+        old = self._rows("2019-02-20", 30.0, "P1")
+        merged = with_predecessors({1: old}, {3: 2, 2: 1, 1: 3})
+        assert as_of(merged[3], pd.Timestamp("2019-06-30"), "profitability") == pytest.approx(0.30)
+
+    def test_unlinked_companies_are_untouched(self):
+        rows = self._rows("2019-02-20", 30.0, "P1")
+        merged = with_predecessors({1: rows}, {})
+        assert list(merged) == [1]
+        assert merged[1] is rows

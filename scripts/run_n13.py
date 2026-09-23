@@ -40,7 +40,7 @@ import pandas as pd
 
 from tradelab.data.sec import SecClient
 from tradelab.research.cross_section import month_end_dates, signal_momentum_12_1
-from tradelab.research.fundamentals import annual_ratio_rows, as_of
+from tradelab.research.fundamentals import annual_ratio_rows, as_of, with_predecessors
 from tradelab.research.ic import forward_returns, information_coefficient, neutralise, summarise_ic
 from tradelab.research.ledger import ResearchLedger
 from tradelab.research.rank_backtest import perf_stats, run_ranked
@@ -101,6 +101,14 @@ def load_fundamentals(ciks: set[int]) -> dict[int, pd.DataFrame]:
         frame.to_parquet(cache, index=False)
         done_file.write_text("\n".join(str(c) for c in sorted(done)))
     return {int(c): g.drop(columns="cik") for c, g in frame.groupby("cik")}
+
+
+def load_predecessors() -> dict[int, int]:
+    path = CLEAN / "predecessors.csv"
+    if not path.exists():
+        return {}
+    frame = pd.read_csv(path)
+    return {int(c): int(p) for c, p in zip(frame["cik"], frame["predecessor_cik"], strict=True)}
 
 
 def universe_on(date, closes, dv, sym_cik) -> list[str]:
@@ -191,8 +199,11 @@ def main() -> None:
     print(f"  {len(months)} month-ends, {len(quarters)} quarter-ends, {months[0]:%Y-%m} to {months[-1]:%Y-%m}")
 
     print("  loading point-in-time fundamentals from SEC XBRL...", flush=True)
-    funds = load_fundamentals(set(sym_cik.values()))
-    print(f"  companies with annual ratio history: {len(funds)}")
+    links = load_predecessors()
+    funds = load_fundamentals(set(sym_cik.values()) | set(links.values()))
+    funds = with_predecessors(funds, links)
+    print(f"  companies with annual ratio history: {len(funds)}  "
+          f"(reorganised companies linked to their predecessor: {len(links)})")
 
     mom, prof, qual, size, members = build_panels(months, closes, dv, sym_cik, funds)
     in_univ = pd.DataFrame(False, index=months, columns=closes.columns)

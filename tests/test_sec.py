@@ -189,3 +189,76 @@ class TestClientRetries:
         client = SecClient(cache_dir=tmp_path, min_interval=0)
         assert client.get_json("/submissions/CIK0000000003.json") == {"ok": True}
         assert calls["n"] == 2
+
+
+class TestPriceWindowPolicy:
+    def test_only_name_identified_symbols_are_blanked_outside_the_filing_window(self):
+        from scripts.build_clean_universe import blank_outside_window
+
+        assert blank_outside_window("name") is True
+        assert blank_outside_window("ticker") is False, (
+            "a current ticker is the live listing; a young CIK there means a reorganisation"
+        )
+
+
+class TestPredecessorLinks:
+    """Reorganisations issue a new CIK; the old one must be found, and only it."""
+
+    def _link(self, successors, windows):
+        import pandas as pd
+        from scripts.build_clean_universe import link_predecessors
+
+        index: dict[str, set[int]] = {}
+        for cik, (_first, spellings) in successors.items():
+            for sp in spellings:
+                index.setdefault(sp, set()).add(cik)
+        for cik, (_w, spellings) in windows.items():
+            for sp in spellings:
+                index.setdefault(sp, set()).add(cik)
+
+        def window_of(cik):
+            first, last = windows[cik][0]
+            return pd.Timestamp(first), pd.Timestamp(last)
+
+        return link_predecessors(
+            {c: (pd.Timestamp(f), s) for c, (f, s) in successors.items()},
+            index, window_of, pd.Timestamp("2010-01-01"),
+        )
+
+    def test_holding_company_reorganisation_is_linked(self):
+        links = self._link(
+            {2: ("2019-05-01", ["waltdisney"])},
+            {1: (("2009-05-01", "2019-02-01"), ["waltdisney"])},
+        )
+        assert links == {2: 1}
+
+    def test_unrelated_namesake_that_stopped_filing_long_ago_is_not_linked(self):
+        links = self._link(
+            {2: ("2019-05-01", ["acme"])},
+            {1: (("2009-05-01", "2012-02-01"), ["acme"])},
+        )
+        assert links == {}
+
+    def test_namesake_that_began_filing_after_the_successor_is_not_linked(self):
+        links = self._link(
+            {2: ("2019-05-01", ["acme"])},
+            {1: (("2019-06-01", "2020-02-01"), ["acme"])},
+        )
+        assert links == {}
+
+    def test_successor_already_filing_at_panel_start_needs_no_link(self):
+        links = self._link(
+            {2: ("2009-05-01", ["acme"])},
+            {1: (("2008-05-01", "2009-06-01"), ["acme"])},
+        )
+        assert links == {}
+
+    def test_closest_handover_wins_among_candidates(self):
+        links = self._link(
+            {3: ("2019-05-01", ["acme"])},
+            {
+                1: (("2009-05-01", "2018-01-01"), ["acme"]),
+                2: (("2010-05-01", "2019-03-01"), ["acme"]),
+            },
+        )
+        assert links == {3: 2}

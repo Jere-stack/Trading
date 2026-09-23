@@ -53,6 +53,7 @@ __all__ = [
     "FundamentalRows",
     "annual_ratio_rows",
     "as_of",
+    "with_predecessors",
 ]
 
 ANNUAL_FORMS = frozenset({"10-K", "10-K/A", "10-KT", "10-KT/A", "20-F", "20-F/A", "40-F", "40-F/A"})
@@ -169,9 +170,13 @@ def annual_ratio_rows(facts: dict[str, Any]) -> FundamentalRows:
         return FundamentalRows(empty, None)
 
     parts = {c: _concept_rows(facts, c, unit) for c in CONCEPTS}
-    keys = pd.concat([p[["accn", "end", "filed"]] for p in parts.values() if len(p)], ignore_index=True)
-    if keys.empty:
+    present = [p[["accn", "end", "filed"]] for p in parts.values() if len(p)]
+    # A filer can report a balance sheet yet have no ANNUAL rows at all -- a
+    # company that has so far filed only quarterly reports. That is an empty
+    # history, not an error; the smoke test found it as a crash.
+    if not present:
         return FundamentalRows(empty, unit)
+    keys = pd.concat(present, ignore_index=True)
     table = keys.drop_duplicates(["accn", "end"]).set_index(["accn", "end"])
     for concept, frame in parts.items():
         table[concept] = frame.set_index(["accn", "end"])["val"] if len(frame) else np.nan
@@ -210,3 +215,34 @@ def as_of(rows: pd.DataFrame, date: pd.Timestamp, metric: str) -> float:
         return float("nan")
     same = visible[visible["end"] == latest_end]
     return float(same.sort_values("filed")[metric].iloc[-1])
+
+
+def with_predecessors(funds: dict[int, pd.DataFrame], links: dict[int, int]) -> dict[int, pd.DataFrame]:
+    """Give each reorganised company the financial history of the entity it replaced.
+
+    A holding-company reorganisation or redomicile issues a NEW CIK to a stock
+    that never stopped trading (Disney 2019, Cigna 2018, BlackRock 2024). Without
+    this, such a stock has no fundamentals until its new registrant files its
+    first annual report, and drops out of the ranking for up to a year.
+
+    The histories are simply pooled: `as_of` already takes the latest fiscal
+    period known on the date, so the successor's own reports take over the moment
+    they exist. Chains (A replaced by B replaced by C) are followed to the end.
+    """
+    out = dict(funds)
+    for successor in links:
+        parts, seen, cik = [], set(), successor
+        while cik is not None and cik not in seen:
+            seen.add(cik)
+            if cik in funds and len(funds[cik]):
+                parts.append(funds[cik])
+            cik = links.get(cik)
+        if len(parts) > 1:
+            out[successor] = (
+                pd.concat(parts, ignore_index=True)
+                .sort_values(["end", "filed"])
+                .reset_index(drop=True)
+            )
+        elif parts:
+            out[successor] = parts[0]
+    return out

@@ -42,7 +42,11 @@ CURRENCIES = (
 def frame_ciks(client: SecClient) -> dict[int, str]:
     ciks: dict[int, str] = {}
     for year in range(2009, 2026):
-        for period in (f"CY{year}Q4I", f"CY{year}Q2I"):
+        # All four quarter-ends: a foreign filer reports only its fiscal year-end
+        # balance sheet, so one with a March or September year-end (Alibaba,
+        # Infosys, many Japanese and Indian issuers) appears in no December or
+        # June frame at all.
+        for period in (f"CY{year}Q4I", f"CY{year}Q2I", f"CY{year}Q1I", f"CY{year}Q3I"):
             for taxonomy in ("us-gaap", "ifrs-full"):
                 for unit in CURRENCIES:
                     payload = client.get_json(

@@ -109,6 +109,64 @@ def identify(row, by_ticker, names, token_index) -> tuple[int | None, str, float
     return None, "unresolved", scored[0][1] if scored else 0.0
 
 
+def blank_outside_window(method: str) -> bool:
+    """Whether an identified symbol's prices are checked against its filing window.
+
+    Only NAME-identified symbols. A symbol identified by its CURRENT ticker is
+    the live listing, and the SEC's ticker assignment is authoritative for it.
+    Its CIK may nonetheless be young, because holding-company reorganisations
+    and redomiciles issue a NEW CIK to a stock that never stopped trading --
+    Disney 2019, Cigna 2018, BlackRock 2024, Marvell 2021, APA 2021. The smoke
+    test showed the window rule blanking years of those stocks' genuine prices.
+    For name-identified codes the rule stays: it caught LB_OLD1, which carries
+    L Brands' prices under the name of LandBridge, a 2024 listing.
+    """
+    return method != "ticker"
+
+
+def squash(name: str | None) -> str:
+    return normalise_name(name).replace(" ", "")
+
+
+def link_predecessors(
+    successors: dict[int, tuple[pd.Timestamp | None, list[str]]],
+    spellings_index: dict[str, set[int]],
+    window_of,
+    panel_start: pd.Timestamp,
+) -> dict[int, int]:
+    """Map each young successor CIK to the CIK it replaced, when one is evident.
+
+    `successors`: cik -> (first XBRL filing date, its name spellings, squashed).
+    A candidate predecessor shares a spelling with the successor, filed XBRL
+    BEFORE the successor did, and stopped filing within [2 years before, 1 year
+    after] the successor's first filing -- the signature of a reorganisation,
+    not of two unrelated firms that happen to share a name. Among candidates,
+    the one whose last filing sits closest to the successor's first wins.
+    Successors that were already filing when the panel starts need no link.
+    """
+    links: dict[int, int] = {}
+    for cik, (first, spellings) in successors.items():
+        if first is None or first <= panel_start:
+            continue
+        candidates: set[int] = set()
+        for sp in spellings:
+            candidates |= spellings_index.get(sp, set())
+        candidates.discard(cik)
+        best, best_gap = None, None
+        for cand in sorted(candidates):
+            p_first, p_last = window_of(cand)
+            if p_first is None or p_first >= first:
+                continue
+            if not (first - pd.Timedelta(days=730) <= p_last <= first + pd.Timedelta(days=365)):
+                continue
+            gap = abs((p_last - first).days)
+            if best_gap is None or gap < best_gap:
+                best, best_gap = cand, gap
+        if best is not None:
+            links[cik] = best
+    return links
+
+
 def filing_window(client: SecClient, cik: int) -> tuple[pd.Timestamp | None, pd.Timestamp | None]:
     facts = client.companyfacts(cik)
     if not facts:
@@ -131,6 +189,7 @@ def main() -> None:
     parser.add_argument("--out", type=Path, default=OUT)
     args = parser.parse_args()
     out_dir = args.out
+    out_dir.mkdir(parents=True, exist_ok=True)
     if not args.registry.exists():
         raise SystemExit("run scripts/sec_registry_scan.py first")
     reg = pd.read_parquet(args.registry)
@@ -181,6 +240,9 @@ def main() -> None:
         first, last = windows[int(r.cik)]
         if first is None:
             continue
+        if not blank_outside_window(r.method):
+            keep_cols.append(r.symbol)
+            continue
         lo = first - pd.Timedelta(days=PRE_FILING_DAYS)
         hi = last + pd.Timedelta(days=POST_FILING_DAYS)
         outside = (closes.index < lo) | (closes.index > hi)
@@ -190,8 +252,35 @@ def main() -> None:
             for frame in (closes, volumes, highs, lows):
                 frame.loc[outside, r.symbol] = np.nan
         keep_cols.append(r.symbol)
-    print(f"  price points blanked outside the registry filing window: {masked_points:,}")
+    print(f"  price points blanked outside the registry filing window: {masked_points:,} "
+          "(name-identified codes only)")
     print(f"  identified symbols with a filing window: {len(keep_cols)}")
+
+    spell_index: dict[str, set[int]] = {}
+    spellings_of: dict[int, list[str]] = {}
+    for rr in reg.itertuples():
+        sps = {squash(rr.name), squash(rr.frame_name)}
+        sps |= {squash(f) for f in str(rr.former_names or "").split("|") if f}
+        sps.discard("")
+        spellings_of[int(rr.cik)] = sorted(sps)
+        for sp in sps:
+            spell_index.setdefault(sp, set()).add(int(rr.cik))
+    kept_ciks = {int(c) for c, sym in zip(ok["cik"], ok["symbol"], strict=False) if sym in keep_cols}
+    succ = {c: (windows[c][0], spellings_of.get(c, [])) for c in kept_ciks}
+    cache: dict[int, tuple] = dict(windows)
+
+    def window_of(cik: int):
+        if cik not in cache:
+            cache[cik] = filing_window(client, cik)
+        return cache[cik]
+
+    links = link_predecessors(succ, spell_index, window_of, closes.index[0])
+    pd.Series(links, name="predecessor_cik").rename_axis("cik").to_csv(out_dir / "predecessors.csv")
+    names_of = reg.set_index("cik")["name"]
+    print(f"\n  predecessor links (reorganised companies keep their earlier fundamentals): {len(links)}")
+    for s_cik, p_cik in sorted(links.items(), key=lambda kv: str(names_of.get(kv[0])))[:25]:
+        print(f"    {str(names_of.get(s_cik))[:30]:<31}{windows[s_cik][0]:%Y-%m}  <-  "
+              f"{str(names_of.get(p_cik))[:30]:<31}last filed {cache[p_cik][1]:%Y-%m}")
 
     clean = {
         "close": closes[keep_cols],
@@ -199,7 +288,6 @@ def main() -> None:
         "high": highs[keep_cols],
         "low": lows[keep_cols],
     }
-    out_dir.mkdir(parents=True, exist_ok=True)
     for key, frame in clean.items():
         frame.to_parquet(out_dir / f"{key}.parquet")
     targets.to_csv(out_dir / "identification.csv", index=False)
