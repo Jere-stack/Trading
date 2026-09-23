@@ -323,3 +323,18 @@ class TestNameTies:
         choice = self._choose("H. J. Heinz Company", [46640, 1637459], raw,
                               ("2011-09-01", "2013-06-07"), windows)
         assert choice == 46640
+
+
+class TestSessions:
+    def test_rows_that_are_not_us_sessions_are_dropped(self):
+        import pandas as pd
+        from scripts.build_clean_universe import sessions_only
+
+        frame = pd.DataFrame(
+            {"AAPL": [1.0, None, 2.0], "MSFT": [3.0, None, 4.0]},
+            index=pd.DatetimeIndex(["2021-05-28", "2021-05-31", "2021-06-01"]),
+        )
+        out = sessions_only(frame, pd.DatetimeIndex(["2021-05-28", "2021-06-01"]))
+        assert list(out.index) == [pd.Timestamp("2021-05-28"), pd.Timestamp("2021-06-01")], (
+            "Memorial Day is not a session; as a month-end it emptied the universe in run 1"
+        )

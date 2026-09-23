@@ -145,6 +145,26 @@ def break_tie(vendor_name: str, tied: list[int], raw_names: dict[int, list[str]]
     return min(tied, key=key)
 
 
+def us_sessions() -> pd.DatetimeIndex:
+    """US trading sessions: the dates the S&P 500 ETF traded."""
+    bars = pd.read_parquet("data/bars/benchmarks/SPY.parquet")
+    idx = pd.DatetimeIndex(bars["timestamp"])
+    idx = idx.tz_convert("UTC").tz_localize(None) if idx.tz is not None else idx
+    return idx.normalize()
+
+
+def sessions_only(frame: pd.DataFrame, sessions: pd.DatetimeIndex) -> pd.DataFrame:
+    """Drop rows that are not US trading sessions.
+
+    The vendor panel has a row for every date ANY of its securities traded.
+    Once the foreign listings are removed, US holidays remain as rows with no
+    price, or one stray price. Run 1 of round 10 showed the damage: a 12-1
+    momentum lookback that lands on such a row is missing for every stock, and
+    a month-end that is a holiday (Memorial Day 2021) has no universe at all.
+    """
+    return frame.loc[frame.index.isin(sessions)]
+
+
 def blank_outside_window(method: str) -> bool:
     """Whether an identified symbol's prices are checked against its filing window.
 
@@ -236,11 +256,15 @@ def main() -> None:
     volumes = pd.read_parquet(PANEL / "dollar_volume.parquet")
     highs = pd.read_parquet(PANEL / "high.parquet")
     lows = pd.read_parquet(PANEL / "low.parquet")
+    sessions = us_sessions()
+    n_rows = len(closes)
+    closes, volumes, highs, lows = (sessions_only(f, sessions) for f in (closes, volumes, highs, lows))
 
     print("=" * 88, flush=True)
     print("CLEAN UNIVERSE  --  identification against the SEC registry", flush=True)
     print("=" * 88, flush=True)
     print(f"  registry: {len(reg):,} filers, {sum(len(v) for v in by_ticker.values()):,} ticker entries")
+    print(f"  panel rows that are not US sessions (no SPY bar), dropped: {n_rows - len(closes)}")
 
     raw_names: dict[int, list[str]] = {}
     for rr in reg.itertuples():

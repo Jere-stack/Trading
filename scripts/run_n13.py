@@ -216,6 +216,12 @@ def main() -> None:
     n_elig = eligible.sum(axis=1)
     print(f"  eligible names per month (top {POOL} with all three components): "
           f"mean {n_elig.mean():.0f}, min {n_elig.min()}")
+    if (n_elig < N_HOLD).any():
+        # Run 1 of round 10 went through with seven such months and parked every
+        # ranked book in cash for them. A month that cannot fill the book is a
+        # data defect, never a result.
+        bad = ", ".join(f"{d:%Y-%m-%d} ({n})" for d, n in n_elig[n_elig < N_HOLD].items())
+        raise SystemExit(f"data defect: month-ends with fewer than {N_HOLD} eligible names: {bad}")
 
     q_comp = composite.loc[quarters]
     fwd_q = forward_returns(closes, quarters)
