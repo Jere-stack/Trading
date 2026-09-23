@@ -1141,3 +1141,115 @@ would answer whether N13 survives, after which it could be cancelled.
 
 **Fifteen hypotheses tested, zero survivors; N13 shelved at the data audit.
 476 configurations.**
+
+---
+
+# Round 10: N13 tested on SEC-cleaned data, and rejected
+
+At the account holder's request N13 was run despite gate 0, on a universe
+rebuilt against an external registry, with a full comparison against simply
+holding the index. Every rule was recorded in the ledger before any result
+(entries 103–105); a defective first run is reported beside the verdict run
+(entries 106–109 record both runs, the defect and the verdict).
+
+## The clean universe
+
+- **Security master:** all 16,559 companies that filed an XBRL balance sheet
+  with the SEC 2009–2025, US GAAP or IFRS, 19 currencies, all four quarter-ends
+  (so March and September year-end foreign filers are included) — with current
+  tickers, former names, industry code and domicile.
+- **Identification of the 787 candidate symbols:** 500 by current ticker, 238
+  by name or former name, **21 removed as contamination** (foreign listings
+  labelled US, codes with no company behind them), 28 unresolved and excluded.
+- **Ties.** 31 name matches tied between several filers — normalising away
+  "Group" and "plc" is what lets vendor spellings agree, so Kraft Foods Group
+  ties with Mondelez (formerly "Kraft Foods Inc"). Lowest-CIK-first picked
+  wrongly in about ten. Ties now go to the closest full legal name, then to
+  the filer whose filing dates best overlap the symbol's trading dates; all 31
+  decisions were printed and checked by eye.
+- **Reorganisations** (Disney 2019, Cigna 2018, BlackRock 2024, Medtronic
+  2015…) issue a new SEC identity to a stock that never stopped trading. 18
+  such companies are linked to their predecessor so their financial history
+  continues.
+- **Prices outside a company's SEC filing life are blanked** for
+  name-identified codes (19,666 points), and only real US sessions are kept.
+
+**Gate 0 still fails:** 99.6% of survivors identified vs 90.6% of delisted
+securities, a **9.0-point gap** against a limit of 6 (round 9: 25.6). Of the
+26 unresolved delisted codes, about 11 are themselves contamination (Polyus,
+BDO Unibank, Boozt, and stale names such as Longs Drug Stores); about 15 are
+genuine companies missed, mostly foreign issuers that filed no usable XBRL in
+the years they traded (Potash, Silver Wheaton, Nexen, Yandex), plus First
+Republic, which filed with the FDIC rather than the SEC. That split is
+post-hoc and does not change the gate; it says the remaining tilt is modest
+and mostly foreign.
+
+## Run 1 — seen, and defective
+
+Run 1 stopped at gate 1 (IC +0.039, t +1.47). Its diagnostics then showed
+seven broken month-ends: removing the foreign listings had left **105 rows
+that are not US sessions** (102 US holidays with no price, three with one
+stray price). A 12-1 momentum lookback landing on one lost every stock's
+momentum; Memorial Day 2021 as a month-end emptied the universe. Every ranked
+book sat in cash for those months. The fix has no free parameter — keep the
+dates SPY traded — and `run_n13` now refuses to run if a month cannot fill the
+book. Run 1 was recorded as a trial, with the defect, before run 2 existed.
+
+## Run 2 — the verdict run
+
+| Gate | Test | Result |
+|---|---|---|
+| 1 | Composite ranks next-quarter returns, t ≥ 2 | **IC +0.036, t +1.38 — FAIL** |
+| 2–4 | Null, components, value beyond momentum | not run |
+| 5 | Beats the 20 largest eligible stocks, both halves | 16.3% vs 17.6%; 16.9% vs 27.3% — fail |
+| 6 | Sharpe ≥ S&P 500 | 0.83 vs 0.90 — fail |
+| 7–8 | Parameter grid holds, both halves | 0 of 12 cells beat the baseline, in any window — fail |
+| 9 | Deflation bar, 566 trials | 0.829 vs 0.828 — passes by 0.001; excess-return reading +0.27 fails |
+
+**N13 is rejected.** With 0 of 12 variants beating a naive book of the 20
+largest eligible stocks, no plausible correction of the 9-point audit gap
+reverses it. Run 1 had given the same verdict.
+
+## Against simply holding the index, 2012-09 to 2026-09
+
+After 0.33% round-trip costs, US dollars, dividends reinvested:
+
+| Book | Per year | Volatility | Sharpe | Worst fall | Years ahead of SPY |
+|---|---|---|---|---|---|
+| **N13 strategy (20 stocks)** | **16.7%** | 21% | 0.83 | −38% | 9/15 |
+| S&P 500 (SPY) | 14.6% | 17% | 0.90 | −34% | — |
+| Nasdaq-100 (QQQ) | 19.4% | 21% | 0.96 | −35% | 11/15 |
+| 20 largest eligible stocks | 22.6% | 25% | 0.95 | −51% | 11/15 |
+| 20 largest, any sector | 22.1% | 24% | 0.94 | −46% | 12/15 |
+| Equal-weight top 100 | 15.3% | 20% | 0.82 | −39% | 8/15 |
+
+N13 made about 2 points a year more than the S&P 500 but with more risk: a
+lower Sharpe ratio and a deeper worst fall. In euros: 17.7% against 15.6%.
+Its worst year relative to the index was 2022, −13.4 points — about **−€3,350
+on €25,000**.
+
+### The "20 largest" rows, and what they are not
+
+M3's withdrawn claim — concentration in the largest names beats the index —
+**reappears on clean data**: +7.5 points a year over SPY, 12 of 15 years. It is
+still not evidence. These books were yardsticks in a test of something else,
+not a pre-registered hypothesis; 2012–2026 is the era in which a handful of
+mega-caps carried the market; the residual survivorship tilt flatters them;
+and their worst fall was −46% to −51%. The Nasdaq-100 fund took much of the
+same move with a −35% worst fall, no trading and no stock selection. Testing
+concentration properly would need a period it has not already been seen to
+win in.
+
+## What round 10 established
+
+- **A reusable clean-universe pipeline** from free SEC data: identification,
+  contamination removal, reorganisation links, point-in-time fundamentals.
+  Survivorship is not solved (9.0 points) but is measured.
+- **Quality + profitability + momentum does not survive** on the large-cap
+  universe a €25,000 account can trade, before or after the data defect.
+- **Neither index was beaten on a risk-adjusted basis** by anything this
+  project has tested. For a Finnish investor the plain options remain the
+  honest benchmark: a Nasdaq-100 or S&P 500 fund, noting that an
+  osakesäästötili cannot hold ETFs.
+
+**Sixteen hypotheses tested, zero survivors. 566 configurations.**

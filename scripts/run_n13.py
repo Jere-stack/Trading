@@ -331,9 +331,11 @@ def main() -> None:
     base = res["Size-matched baseline (20 largest eligible)"].equity.reindex(n13.index).ffill()
     halves = [("first half", n13.index < SPLIT), ("second half", n13.index >= SPLIT)]
     g5 = True
+    g5_detail = []
     for label, m in halves:
         a, b = perf_stats(n13[m] / n13[m].iloc[0]), perf_stats(base[m] / base[m].iloc[0])
         g5 &= a["cagr"] > b["cagr"]
+        g5_detail.append(f"{label} {a['cagr']:.1%} vs {b['cagr']:.1%}")
         print(f"  {label:<12} N13 {a['cagr']:>7.2%}   baseline {b['cagr']:>7.2%}   "
               f"{'beats' if a['cagr'] > b['cagr'] else 'LOSES'}")
     s_n13, s_spy = perf_stats(n13), perf_stats(spy)
@@ -424,11 +426,11 @@ def main() -> None:
         print(f"  {name:<46} one-way turnover per rebalance {r.mean_turnover:>6.1%}   "
               f"total cost paid {r.cost_paid:>6.2%} of NAV")
 
-    log(5, "Beats the 20 largest eligible stocks in both halves", g5, "see halves above")
+    log(5, "Beats the 20 largest eligible stocks in both halves", g5, "; ".join(g5_detail))
     log(6, "Sharpe at least the S&P 500's", g6, f"{s_n13['sharpe']:.2f} vs {s_spy['sharpe']:.2f}")
     log(7, "Holds across the parameter grid (>= 50% of 12 cells)", g7, f"{share['full']:.0%} of cells beat the baseline")
     log(8, "Holds in both halves of the sample", g8, f"2012-19 {share['h1']:.0%}, 2019-26 {share['h2']:.0%} of cells")
-    log(9, "Clears the deflation bar for 500+ trials", g9, f"Sharpe {s_n13['sharpe']:.2f} vs bar {bar_raw:.2f}; vs-SPY IR {act['ir']:+.2f}")
+    log(9, "Clears the deflation bar for 500+ trials", g9, f"Sharpe {s_n13['sharpe']:.3f} vs bar {bar_raw:.3f}; vs-SPY IR {act['ir']:+.2f}")
     record = {
         "verdict": verdict, "gates": sorted(gate_log, key=lambda g: g["gate"]),
         "start": f"{start:%Y-%m-%d}", "end": f"{idx[-1]:%Y-%m-%d}",

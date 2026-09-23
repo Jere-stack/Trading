@@ -30,7 +30,38 @@ SHOW = {
 }
 
 
-def payload() -> dict:
+SPLIT = pd.Timestamp("2019-07-01")  # as in scripts/run_n13.py
+
+
+def _cagr(equity: pd.Series) -> float:
+    years = (equity.index[-1] - equity.index[0]).days / 365.25
+    return float((equity.iloc[-1] / equity.iloc[0]) ** (1 / years) - 1)
+
+
+def _gate_details(gates: dict, curves: pd.DataFrame, summary: pd.DataFrame) -> None:
+    """Spell out two details that runs before this fix stored in shorthand.
+
+    Gate 5 was logged as "see halves above"; the halves are recomputed here
+    from the saved curves exactly as run_n13 computes them. Gate 9 was logged
+    at two decimals, which hides that it passed by 0.001.
+    """
+    for g in gates["gates"]:
+        if g["gate"] == 5 and g["detail"] == "see halves above":
+            n13 = curves["N13 (top 20 by composite)"].dropna()
+            base = curves["Size-matched baseline (20 largest eligible)"].reindex(n13.index).ffill()
+            parts = []
+            for label, m in (("2012-19", n13.index < SPLIT), ("2019-26", n13.index >= SPLIT)):
+                parts.append(f"{label}: strategy {_cagr(n13[m]):.1%} a year vs {_cagr(base[m]):.1%}")
+            g["detail"] = "; ".join(parts)
+        if g["gate"] == 9:
+            sharpe = float(summary.loc[summary["book"] == "N13 (top 20 by composite)", "sharpe"].iloc[0])
+            ir = gates["active_vs_spy"]["ir"]
+            g["detail"] = (f"Sharpe {sharpe:.3f} vs bar {gates['deflation_bar']:.3f}: passes by "
+                           f"{sharpe - gates['deflation_bar']:.3f}. The stricter reading, Sharpe of returns "
+                           f"in excess of the S&P 500, is {ir:+.2f} and fails.")
+
+
+def payload(run1_dir: Path | None = None) -> dict:
     curves = pd.read_parquet(CLEAN / "n13_curves.parquet")
     weekly = curves.resample("W-FRI").last().dropna(how="all")
     weekly.iloc[0] = curves.iloc[0]
@@ -50,8 +81,14 @@ def payload() -> dict:
         prev.iloc[0] = s.iloc[0]
         yearly[col] = (ends / prev - 1.0)
 
+    _gate_details(gates, curves, summary)
     audit = ident[ident["method"] != "contaminant"]
     live, dead = audit[~audit["delisted"]], audit[audit["delisted"]]
+    run1 = None
+    if run1_dir is not None:
+        g1 = json.loads((run1_dir / "n13_gates.json").read_text())
+        s1 = pd.read_csv(run1_dir / "n13_summary.csv").set_index("book")
+        run1 = {"verdict": g1["verdict"], "cagr": float(s1.loc["N13 (top 20 by composite)", "cagr"])}
     return {
         "dates": [d.strftime("%Y-%m-%d") for d in weekly.index],
         "growth": {SHOW[c]: [round(float(v), 4) for v in weekly[c]] for c in SHOW},
@@ -68,6 +105,7 @@ def payload() -> dict:
             "live_rate": float(live["cik"].notna().mean()),
             "dead_rate": float(dead["cik"].notna().mean()),
         },
+        "run1": run1,
     }
 
 
@@ -109,7 +147,7 @@ header { display: grid; gap: 12px; }
   padding: 6px 12px; border-radius: 999px; width: fit-content; }
 .verdict.fail { background: var(--bad-bg); color: var(--bad); }
 .verdict.pass { background: var(--good-bg); color: var(--good); }
-.kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 1px;
+.kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 1px;
   background: var(--border); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
 .kpi { background: var(--surface); padding: 14px 16px; display: grid; gap: 2px; }
 .kpi .label { font-size: .8rem; color: var(--ink-3); }
@@ -127,6 +165,7 @@ section.card { background: var(--surface); border: 1px solid var(--border); bord
 .tip { position: absolute; top: 0; pointer-events: none; background: var(--surface); border: 1px solid var(--border);
   border-radius: 8px; padding: 8px 10px; font-size: .8rem; box-shadow: 0 4px 16px rgba(0,0,0,.08);
   display: grid; gap: 3px; min-width: 150px; }
+.tip[hidden] { display: none; }
 .tip .when { color: var(--ink-3); font-size: .74rem; }
 .tip .row { display: flex; align-items: center; gap: 8px; }
 .tip .row b { font-variant-numeric: tabular-nums; min-width: 58px; }
@@ -167,6 +206,7 @@ footer p { font-size: .8rem; color: var(--ink-3); }
     <h1>Did quality, profitability and momentum beat simply holding the S&amp;P 500?</h1>
     <div id="verdict" class="verdict"></div>
     <p id="lede"></p>
+    <p id="lede2"></p>
   </header>
 
   <div class="kpis" id="kpis"></div>
@@ -215,7 +255,7 @@ footer p { font-size: .8rem; color: var(--ink-3); }
 (() => {
   const D = JSON.parse(document.getElementById("data").textContent);
   const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
-  const pct = (x, d = 1) => (x == null || isNaN(x)) ? "\u2013" : (x * 100).toFixed(d) + "%";
+  const pct = (x, d = 1) => (x == null || isNaN(x)) ? "\u2013" : (x < 0 ? "\u2212" : "") + Math.abs(x * 100).toFixed(d) + "%";
   const spct = (x, d = 1) => (x == null || isNaN(x)) ? "\u2013" : (x > 0 ? "+" : x < 0 ? "\u2212" : "") + Math.abs(x * 100).toFixed(d) + "%";
   const el = (tag, attrs = {}, text) => { const n = document.createElement(tag);
     for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v); if (text != null) n.textContent = text; return n; };
@@ -240,6 +280,11 @@ footer p { font-size: .8rem; color: var(--ink-3); }
     `From ${D.gates.start} to ${D.gates.end}, the strategy compounded at ${pct(n13.cagr)} a year against ` +
     `${pct(spy.cagr)} for the S&P 500 (${spct(ahead)}), with ${pct(n13.vol, 0)} volatility against ${pct(spy.vol, 0)}. ` +
     `${allPass ? "It cleared every test fixed in advance." : "It did not clear the tests fixed in advance, so this is a description of history, not evidence of an edge."}`;
+  const top20 = book("Top 20 largest, clean universe (M3 re-run)");
+  document.getElementById("lede2").textContent =
+    `Two simpler things did better. The Nasdaq-100 fund compounded at ${pct(qqq.cagr)} a year with a worst fall of ` +
+    `${pct(qqq.maxdd, 0)}. Holding the 20 largest eligible stocks, with no signal at all, compounded at ${pct(base.cagr)} ` +
+    `(worst fall ${pct(base.maxdd, 0)}) \u2014 the quality and momentum ranking subtracted value from that starting point in every variant tested.`;
 
   const kpis = [
     ["Strategy, per year", pct(n13.cagr), "compound annual return"],
@@ -266,7 +311,10 @@ footer p { font-size: .8rem; color: var(--ink-3); }
     const tip = el("div", { class: "tip", "aria-hidden": "true" }); tip.hidden = true;
     function draw() {
       host.replaceChildren();
-      const W = host.clientWidth, H = opts.height, m = { t: 10, r: opts.endLabels ? 96 : 16, b: 26, l: 48 };
+      // On a phone the full end labels would take a third of the plot; the
+      // legend names the lines there and the labels carry the value alone.
+      const W = host.clientWidth, H = opts.height, narrow = W < 560;
+      const m = { t: 10, r: opts.endLabels ? (narrow ? 56 : 96) : 16, b: 26, l: 48 };
       const iw = W - m.l - m.r, ih = H - m.t - m.b;
       const all = names.flatMap((n) => series[n]).filter((x) => x != null);
       const y0 = opts.log ? Math.log(Math.min(...all)) : Math.min(0, ...all);
@@ -298,7 +346,7 @@ footer p { font-size: .8rem; color: var(--ink-3); }
           svg.append(svgEl("circle", { cx: X(dates.length - 1), cy: Y(series[n].at(-1)), r: 4, fill: css(COLORS[n]),
             stroke: css("--surface"), "stroke-width": 2 }));
           const tx = svgEl("text", { x: X(dates.length - 1) + 10, y: y + 4, fill: css("--ink-2"), "font-size": 11 });
-          tx.textContent = `${n} ${opts.fmt(series[n].at(-1))}`; svg.append(tx);
+          tx.textContent = narrow ? opts.fmt(series[n].at(-1)) : `${n} ${opts.fmt(series[n].at(-1))}`; svg.append(tx);
         }
       }
       const cross = svgEl("line", { y1: m.t, y2: m.t + ih, stroke: css("--ink-3"), "stroke-width": 1 });
@@ -420,7 +468,9 @@ footer p { font-size: .8rem; color: var(--ink-3); }
   // ---------------------------------------------------------------- gates
   const G = document.getElementById("gates");
   const g0 = { gate: 0, label: "Survivorship audit of the data", status: "fail",
-    detail: `Failed in round 9. Run anyway at your request on data cleaned against the SEC registry: ${pct(D.audit.live_rate, 0)} of surviving stocks identified vs ${pct(D.audit.dead_rate, 0)} of delisted ones.` };
+    detail: `Failed in round 9. Run anyway at your request on data cleaned against the SEC registry, where it still fails: ` +
+      `${pct(D.audit.live_rate, 1)} of surviving stocks identified vs ${pct(D.audit.dead_rate, 1)} of delisted ones, a gap of ` +
+      `${((D.audit.live_rate - D.audit.dead_rate) * 100).toFixed(1)} points against a limit of 6.` };
   for (const g of [g0, ...D.gates.gates]) {
     const row = el("div", { class: "gate" });
     const chip = el("span", { class: "chip " + (g.status === "pass" ? "pass" : g.status === "fail" ? "fail" : "notrun") },
@@ -435,7 +485,12 @@ footer p { font-size: .8rem; color: var(--ink-3); }
     `Costs: 0.33% per round trip on the value traded (IBKR commissions plus spread, sized for a €25,000 account). Not included: taxes, the price-data subscription, or a server. For a Finnish investor, an equity savings account (osakesäästötili) would defer tax on this strategy's trades; an S&P 500 index fund already defers it by not trading.`,
     `Returns are in US dollars. In euros both the strategy and the index move with EUR/USD together, so the gap between them is essentially unchanged.`,
     `The strategy holds 20 stocks, so it can drift far from the index in any single year, as the yearly chart shows. That tracking risk is the price of trying to beat it.`,
+    `The \u201c20 largest\u201d books beat the S&P 500 by a wide margin, but they were comparison yardsticks here, not a tested strategy. Over 2012\u20132026 they amount to a bet on the mega-caps that led this particular era, with a worst fall of about ${pct(top20.maxdd, 0)}. The Nasdaq-100 fund captured much of the same move with a shallower fall and no trading.`,
   ];
+  if (D.run1) notes.push(
+    `This is the second run. The first (${D.run1.verdict.replace("KILLED", "killed").split(":")[0]}, strategy ${pct(D.run1.cagr)} a year) had a data defect: ` +
+    `removing foreign listings left 105 US market holidays in the price table, which broke seven month-ends and left the ranked books in cash for those months. ` +
+    `The defect and the first result were recorded before the fix, and the verdict did not change.`);
   const N = document.getElementById("notes"); notes.forEach((t) => N.append(el("p", {}, t)));
   document.getElementById("foot").textContent =
     `Ledger trials at test time: ${D.gates.trials}. Deflation bar ${D.gates.deflation_bar.toFixed(2)}. Universe: top 100 US-listed stocks by trading value each month, one share class per company; fundamentals from SEC XBRL filings, usable from the day after filing.`;
@@ -452,8 +507,10 @@ footer p { font-size: .8rem; color: var(--ink-3); }
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", type=Path, required=True)
+    parser.add_argument("--run1", type=Path, default=None,
+                        help="directory holding run 1's n13_gates.json and n13_summary.csv, to cite beside run 2")
     args = parser.parse_args()
-    data = json.dumps(payload(), separators=(",", ":")).replace("</", "<\\/")
+    data = json.dumps(payload(args.run1), separators=(",", ":")).replace("</", "<\\/")
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(PAGE.replace("__DATA__", data), encoding="utf-8")
     print(f"wrote {args.out} ({args.out.stat().st_size / 1024:.0f} KB)")
