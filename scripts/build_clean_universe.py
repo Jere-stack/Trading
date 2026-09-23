@@ -38,7 +38,7 @@ import numpy as np
 import pandas as pd
 
 from scripts.n13_map_ciks import base_ticker, vendor_mislabel
-from tradelab.data.sec import SecClient, name_similarity, normalise_name
+from tradelab.data.sec import SecClient, full_name, name_similarity, normalise_name
 
 PANEL = Path("data/signals/n12")
 REGISTRY = Path("data/sec/registry.parquet")
@@ -86,7 +86,7 @@ def best_name(norm: str, cik: int, names) -> float:
     return max((name_similarity(norm, n) for n in names.get(cik, [])), default=0.0)
 
 
-def identify(row, by_ticker, names, token_index) -> tuple[int | None, str, float]:
+def identify(row, by_ticker, names, token_index, tiebreak=None) -> tuple[int | None, str, float]:
     if not row.name or str(row.name).strip().upper() == row.ticker or vendor_mislabel(row.ticker, row.name):
         return None, "contaminant", 0.0
     norm = normalise_name(row.name)
@@ -100,13 +100,49 @@ def identify(row, by_ticker, names, token_index) -> tuple[int | None, str, float
     for tok in norm.split():
         if len(tok) >= 3:
             pool |= token_index.get(tok, set())
-    # Ties at the top are broken by CIK order, deterministically. A wrong pick
-    # between two same-named filers (a parent and a subsidiary that both file)
-    # is then caught only if its filing window disagrees with the prices -- rule 3.
     scored = sorted(((c, best_name(norm, c, names)) for c in pool), key=lambda t: (-t[1], t[0]))
     if scored and scored[0][1] >= 0.92:
-        return scored[0][0], "name", scored[0][1]
+        # Several filers can share the top score, because normalising away
+        # "Group" and "plc" is what lets vendor spellings agree: "Kraft Foods
+        # Group" ties with Mondelez (formerly "Kraft Foods Inc"). CIK order
+        # broke such ties until the round-10 audit found it wrong in ~10 of 31.
+        tied = [c for c, sim in scored if sim >= scored[0][1] - 1e-9]
+        cik = tiebreak(row, tied) if tiebreak is not None and len(tied) > 1 else scored[0][0]
+        return cik, "name", scored[0][1]
     return None, "unresolved", scored[0][1] if scored else 0.0
+
+
+def span_overlap(a: tuple, b: tuple) -> float:
+    """Intersection over union of two date spans; 0 when either is missing."""
+    if None in (*a, *b):
+        return 0.0
+    inter = (min(a[1], b[1]) - max(a[0], b[0])).days
+    union = (max(a[1], b[1]) - min(a[0], b[0])).days
+    return max(inter, 0) / union if union > 0 else 0.0
+
+
+def break_tie(vendor_name: str, tied: list[int], raw_names: dict[int, list[str]],
+              price_span: tuple, window_of) -> int:
+    """Choose among filers whose normalised names tie, using only names and dates.
+
+    1. The full legal name, corporate words kept: "Kraft Foods Group Inc" is
+       Kraft Foods Group, not Mondelez's former "Kraft Foods Inc"; "Raytheon
+       Technologies Corporation" is RTX, not "Raytheon Co". Word order is
+       ignored as in the main match -- the SEC files "HEINZ H J CO".
+    2. Then the overlap between the years the symbol traded and the years the
+       filer filed: Viacom 2006-2019 is not CBS-become-Paramount, though both
+       were once called "Viacom Inc".
+    3. Then CIK order, so the choice is deterministic.
+    No price LEVEL or return is consulted -- only when prices exist.
+    """
+    target = full_name(vendor_name)
+
+    def key(cik: int):
+        spelled = max((name_similarity(target, full_name(n)) for n in raw_names.get(cik, [])),
+                      default=0.0)
+        return (-round(spelled, 2), -span_overlap(price_span, window_of(cik)), cik)
+
+    return min(tied, key=key)
 
 
 def blank_outside_window(method: str) -> bool:
@@ -206,8 +242,30 @@ def main() -> None:
     print("=" * 88, flush=True)
     print(f"  registry: {len(reg):,} filers, {sum(len(v) for v in by_ticker.values()):,} ticker entries")
 
+    raw_names: dict[int, list[str]] = {}
+    for rr in reg.itertuples():
+        spellings = {rr.name, rr.frame_name, *str(rr.former_names or "").split("|")}
+        raw_names[int(rr.cik)] = sorted(s for s in spellings if s)
+    windows: dict[int, tuple] = {}
+
+    def window_of(cik: int):
+        if cik not in windows:
+            windows[cik] = filing_window(client, cik)
+        return windows[cik]
+
+    def price_span(symbol: str) -> tuple:
+        px = closes[symbol].dropna()
+        return (px.index[0], px.index[-1]) if len(px) else (None, None)
+
+    tie_log: list[tuple[str, str, list[int], int]] = []
+
+    def tiebreak(row, tied: list[int]) -> int:
+        choice = break_tie(row.name, tied, raw_names, price_span(row.symbol), window_of)
+        tie_log.append((row.symbol, row.name, tied, choice))
+        return choice
+
     targets = reference_names(list(closes.columns))
-    ids = [identify(r, by_ticker, names, token_index) for r in targets.itertuples()]
+    ids = [identify(r, by_ticker, names, token_index, tiebreak) for r in targets.itertuples()]
     targets["cik"] = [i[0] for i in ids]
     targets["method"] = [i[1] for i in ids]
     targets["similarity"] = [round(i[2], 3) for i in ids]
@@ -231,9 +289,18 @@ def main() -> None:
             print(f"    {r.symbol:<9}{'D' if r.delisted else 'L'} {str(r.name)[:32]:<33}-> "
                   f"{str(sec_name.get(r.cik, '?'))[:34]:<35}{r.similarity:.2f}")
 
+    # Every tie decision is printed: the rule is new, and a rule that picks
+    # between companies should be audited by eye, not trusted.
+    print(f"\n  name ties broken by full legal name, then trading/filing overlap: {len(tie_log)}")
+    for symbol, vendor, tied, choice in tie_log:
+        others = ", ".join(str(sec_name.get(c, c))[:24] for c in tied if c != choice)
+        print(f"    {symbol:<9}{str(vendor)[:30]:<31}-> {str(sec_name.get(choice, '?'))[:30]:<31}"
+              f"not {others}")
+
     # ------------------------------------------------ price-registry consistency
     ok = targets[targets["cik"].notna()].copy()
-    windows = {int(c): filing_window(client, int(c)) for c in ok["cik"].unique()}
+    for c in ok["cik"].unique():
+        window_of(int(c))
     masked_points = 0
     keep_cols = []
     for r in ok.itertuples():
@@ -267,20 +334,13 @@ def main() -> None:
             spell_index.setdefault(sp, set()).add(int(rr.cik))
     kept_ciks = {int(c) for c, sym in zip(ok["cik"], ok["symbol"], strict=False) if sym in keep_cols}
     succ = {c: (windows[c][0], spellings_of.get(c, [])) for c in kept_ciks}
-    cache: dict[int, tuple] = dict(windows)
-
-    def window_of(cik: int):
-        if cik not in cache:
-            cache[cik] = filing_window(client, cik)
-        return cache[cik]
-
     links = link_predecessors(succ, spell_index, window_of, closes.index[0])
     pd.Series(links, name="predecessor_cik").rename_axis("cik").to_csv(out_dir / "predecessors.csv")
     names_of = reg.set_index("cik")["name"]
     print(f"\n  predecessor links (reorganised companies keep their earlier fundamentals): {len(links)}")
     for s_cik, p_cik in sorted(links.items(), key=lambda kv: str(names_of.get(kv[0])))[:25]:
         print(f"    {str(names_of.get(s_cik))[:30]:<31}{windows[s_cik][0]:%Y-%m}  <-  "
-              f"{str(names_of.get(p_cik))[:30]:<31}last filed {cache[p_cik][1]:%Y-%m}")
+              f"{str(names_of.get(p_cik))[:30]:<31}last filed {windows[p_cik][1]:%Y-%m}")
 
     clean = {
         "close": closes[keep_cols],

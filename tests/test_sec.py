@@ -262,3 +262,64 @@ class TestPredecessorLinks:
             },
         )
         assert links == {3: 2}
+
+
+class TestNameTies:
+    """Normalising away "Group" and "plc" makes some different companies tie."""
+
+    def test_full_name_keeps_corporate_words_and_expands_abbreviations(self):
+        from tradelab.data.sec import full_name
+
+        assert full_name("RAYTHEON CO/") == "raytheon company"
+        assert full_name("Kraft Foods Group, Inc.") == "kraft foods group incorporated"
+        assert normalise_name("Kraft Foods Group, Inc.") == normalise_name("KRAFT FOODS INC")
+
+    @staticmethod
+    def _choose(vendor, tied, raw_names, price_span, windows):
+        import pandas as pd
+        from scripts.build_clean_universe import break_tie
+
+        ts = lambda d: pd.Timestamp(d)  # noqa: E731
+        return break_tie(
+            vendor, tied, raw_names, (ts(price_span[0]), ts(price_span[1])),
+            lambda c: (ts(windows[c][0]), ts(windows[c][1])),
+        )
+
+    def test_legal_name_decides_first(self):
+        raw = {1: ["Mondelez International, Inc.", "KRAFT FOODS INC"], 2: ["Kraft Foods Group, Inc."]}
+        windows = {1: ("2009-01-01", "2026-01-01"), 2: ("2012-06-01", "2015-08-01")}
+        choice = self._choose("Kraft Foods Group Inc", [1, 2], raw, ("2012-10-01", "2015-07-01"), windows)
+        assert choice == 2
+
+    def test_overlap_decides_when_legal_names_also_tie(self):
+        """Two filers were each once 'Viacom Inc'; the one filing while the symbol traded wins."""
+        raw = {1: ["Paramount Global", "VIACOM INC"], 2: ["Viacom Inc."]}
+        windows = {1: ("2009-01-01", "2025-12-01"), 2: ("2009-01-01", "2019-12-31")}
+        choice = self._choose("Viacom Inc", [1, 2], raw, ("2011-09-01", "2019-12-01"), windows)
+        assert choice == 2
+
+    def test_a_ticker_change_does_not_hand_the_symbol_to_a_namesake(self):
+        """UTX ended when the ticker became RTX, not when the company stopped filing."""
+        raw = {1: ["RTX Corp", "Raytheon Technologies Corp", "UNITED TECHNOLOGIES CORP /DE/"],
+               2: ["RAYTHEON CO/"]}
+        windows = {1: ("2009-01-01", "2026-06-01"), 2: ("2009-01-01", "2020-04-01")}
+        choice = self._choose("Raytheon Technologies Corporation", [1, 2], raw,
+                              ("2011-09-01", "2020-04-01"), windows)
+        assert choice == 1
+
+    def test_span_overlap(self):
+        import pandas as pd
+        from scripts.build_clean_universe import span_overlap
+
+        ts = pd.Timestamp
+        assert span_overlap((ts("2010-01-01"), ts("2012-01-01")), (ts("2010-01-01"), ts("2012-01-01"))) == 1.0
+        assert span_overlap((ts("2010-01-01"), ts("2011-01-01")), (ts("2012-01-01"), ts("2013-01-01"))) == 0.0
+        assert span_overlap((ts("2010-01-01"), ts("2011-01-01")), (None, None)) == 0.0
+
+    def test_surname_first_sec_spelling_still_wins_on_legal_name(self):
+        raw = {46640: ["Kraft Heinz Foods Co", "HEINZ H J CO"],
+               1637459: ["Kraft Heinz Co", "H.J. Heinz Holding Corp"]}
+        windows = {46640: ("2009-01-01", "2014-12-31"), 1637459: ("2015-06-01", "2026-06-01")}
+        choice = self._choose("H. J. Heinz Company", [46640, 1637459], raw,
+                              ("2011-09-01", "2013-06-07"), windows)
+        assert choice == 46640

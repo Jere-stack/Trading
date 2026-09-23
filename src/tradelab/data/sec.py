@@ -46,6 +46,7 @@ from typing import Any
 
 __all__ = [
     "SecClient",
+    "full_name",
     "name_similarity",
     "normalise_name",
 ]
@@ -64,6 +65,25 @@ _DROP_TOKENS = {
     "stock", "international", "intl", "technologies", "technology",
     "ordinary", "shares",
 }
+# Abbreviations spelled out by `full_name`, so "RAYTHEON CO" reads as "Raytheon Company".
+_EXPAND = {
+    "co": "company", "cos": "companies", "corp": "corporation", "inc": "incorporated",
+    "ltd": "limited", "intl": "international", "hldgs": "holdings", "grp": "group",
+}
+
+
+def _name_tokens(name: str | None) -> list[str]:
+    if not name:
+        return []
+    # Apostrophes are DELETED rather than spaced: "O'Reilly" and its curly
+    # form (U+2019) must both become "oreilly". Found by the gate-0 audit, where a curly
+    # apostrophe left O'Reilly Automotive unmatched.
+    text = re.sub(r"['\u2018\u2019\u02bc`]", "", str(name))
+    text = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode()
+    text = text.lower().replace("&", " and ")
+    text = re.sub(r"[/\\][a-z]{2}[/\\]", " ", text)  # /DE/, \NY\
+    text = re.sub(r"[^a-z0-9 ]+", " ", text)
+    return text.split()
 
 
 def normalise_name(name: str | None) -> str:
@@ -74,18 +94,18 @@ def normalise_name(name: str | None) -> str:
     stem or abbreviate beyond that: over-normalising is how "American
     Airlines" and "American Express" collide.
     """
-    if not name:
-        return ""
-    # Apostrophes are DELETED rather than spaced: "O'Reilly" and its curly
-    # form (U+2019) must both become "oreilly". Found by the gate-0 audit, where a curly
-    # apostrophe left O'Reilly Automotive unmatched.
-    text = re.sub(r"['\u2018\u2019\u02bc`]", "", str(name))
-    text = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode()
-    text = text.lower().replace("&", " and ")
-    text = re.sub(r"[/\\][a-z]{2}[/\\]", " ", text)  # /DE/, \NY\
-    text = re.sub(r"[^a-z0-9 ]+", " ", text)
-    tokens = [t for t in text.split() if t not in _DROP_TOKENS]
-    return " ".join(tokens)
+    return " ".join(t for t in _name_tokens(name) if t not in _DROP_TOKENS)
+
+
+def full_name(name: str | None) -> str:
+    """The name with its corporate-form words KEPT and abbreviations spelled out.
+
+    `normalise_name` discards "Group", "Holdings", "plc" so vendor spellings
+    agree -- which is also why "Kraft Foods Group" and Mondelez's former name
+    "Kraft Foods Inc" become the same string. This spelling tells them apart,
+    and is used only to break such ties.
+    """
+    return " ".join(_EXPAND.get(t, t) for t in _name_tokens(name))
 
 
 def name_similarity(a: str, b: str) -> float:
